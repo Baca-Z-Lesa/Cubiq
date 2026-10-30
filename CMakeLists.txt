@@ -56,6 +56,7 @@ add_library(CubiqWorld STATIC
     src/World/Raycast.cpp
     src/World/Physics.cpp
     src/World/Features.cpp
+    src/World/Structures.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 

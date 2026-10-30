@@ -1,34 +1,17 @@
 #include "World/Features.h"
 #include "World/Chunk.h"
+#include "World/Random.h"
+#include "World/Structures.h"
 #include "World/TerrainGenerator.h"
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace cubiq {
 
 namespace {
-    // Malý rýchly generátor náhodných čísel (xorshift) – deterministický podľa seedu.
-    struct Rng {
-        uint32_t s;
-        explicit Rng(uint32_t seed) : s(seed ? seed : 0x9E3779B9u) {}
-        uint32_t next()
-        {
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            return s;
-        }
-        float f() { return (next() & 0xFFFFFF) / 16777216.0f; }
-        int range(int a, int b) { return a + (int)(next() % (uint32_t)(b - a + 1)); }
-    };
-
-    uint32_t mix(int x, int y, int z, uint32_t seed)
-    {
-        uint32_t h = seed ^ (uint32_t)(x * 73856093) ^ (uint32_t)(y * 19349663) ^ (uint32_t)(z * 83492791);
-        h = (h ^ (h >> 15)) * 2246822519u;
-        return h ^ (h >> 13);
-    }
+    uint32_t mix(int x, int y, int z, uint32_t seed) { return hashCoords(x, y, z, seed); }
 
     // Zapisuje bloky stromu len do aktuálneho chunku.
     struct Writer {
@@ -41,7 +24,7 @@ namespace {
             if (!Chunk::inBounds(lx, y, lz)) return;
             BlockId cur = chunk.get(lx, y, lz);
             // Kmeň prerastie listy, listy vyplnia len vzduch.
-            if (cur == BlockId::Air || (trunk && isLeaves(cur))) chunk.set(lx, y, lz, id);
+            if (cur == BlockId::Air || (trunk && isCutout(cur))) chunk.set(lx, y, lz, id);
         }
         void log(int x, int y, int z, BlockId id) { put(x, y, z, id, true); }
         void leaf(int x, int y, int z, BlockId id) { put(x, y, z, id, false); }
@@ -250,10 +233,23 @@ void placeTrees(Chunk& chunk, const TerrainGenerator& gen)
     const int baseZ = chunk.coord().y * Chunk::SIZE_Z;
     Writer w{chunk, baseX, baseZ};
 
+    // V dedinách stromy nerastú.
+    std::vector<glm::ivec2> villages = villageCentersNear(baseX - TREE_MARGIN, baseZ - TREE_MARGIN,
+                                                          baseX + Chunk::SIZE_X + TREE_MARGIN,
+                                                          baseZ + Chunk::SIZE_Z + TREE_MARGIN, gen);
+    auto inVillage = [&](int x, int z) {
+        for (glm::ivec2 v : villages) {
+            int dx = x - v.x, dz = z - v.y;
+            if (dx * dx + dz * dz < VILLAGE_RADIUS * VILLAGE_RADIUS) return true;
+        }
+        return false;
+    };
+
     for (int z = baseZ - TREE_MARGIN; z < baseZ + Chunk::SIZE_Z + TREE_MARGIN; ++z) {
         for (int x = baseX - TREE_MARGIN; x < baseX + Chunk::SIZE_X + TREE_MARGIN; ++x) {
             float r = gen.random01(x, z, 1);
             if (r >= MAX_TREE_CHANCE) continue; // väčšina stĺpcov skončí tu, bez drahých dopytov
+            if (!villages.empty() && inVillage(x, z)) continue;
 
             TerrainGenerator::Surface s = gen.surfaceAt(x, z);
             TreeKind kind = chooseTree(s, r, gen.random01(x, z, 2));

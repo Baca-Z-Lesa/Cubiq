@@ -161,6 +161,65 @@ std::vector<uint8_t> generateBlockAtlas()
     p.fill(TILE_TERRACOTTA_WHITE, [&](int x, int y) { p.put(TILE_TERRACOTTA_WHITE, x, y, {212, 180, 162}, 6, 49); });
     p.fill(TILE_TERRACOTTA_BROWN, [&](int x, int y) { p.put(TILE_TERRACOTTA_BROWN, x, y, {80, 52, 36}, 6, 50); });
 
+    // Dosky: 4 vodorovné dosky so škárami a posunutými spojmi.
+    auto planks = [&](int tile, Rgb c, int seed) {
+        p.fill(tile, [&](int x, int y) {
+            int board = y / 4;
+            bool seam = y % 4 == 3 || (x == (board * 5 + 3) % 16);
+            Rgb k = seam ? Rgb{c.r * 3 / 4, c.g * 3 / 4, c.b * 3 / 4} : c;
+            p.put(tile, x, y, k, 7, seed);
+        });
+    };
+    planks(TILE_OAK_PLANKS, {172, 138, 86}, 51);
+    planks(TILE_SPRUCE_PLANKS, {112, 82, 50}, 52);
+
+    // Kamenná dlažba: nepravidelné "kamene" s tmavými škárami.
+    auto cobble = [&](int tile, bool mossy, int seed) {
+        p.fill(tile, [&](int x, int y) {
+            int cx = (x + (y / 5 % 2) * 3) / 5, cy = y / 5;
+            bool seam = (x + (y / 5 % 2) * 3) % 5 == 0 || y % 5 == 0;
+            int shade = (int)(hash(cx, cy, seed) % 30);
+            Rgb c = seam ? Rgb{78, 78, 80} : Rgb{118 + shade, 118 + shade, 120 + shade};
+            if (mossy && rand01(x / 2, y / 2, seed + 1) < 0.35f) c = {74, 112, 52};
+            p.put(tile, x, y, c, 8, seed + 2);
+        });
+    };
+    cobble(TILE_COBBLESTONE, false, 53);
+    cobble(TILE_MOSSY_COBBLESTONE, true, 54);
+
+    // Kamenné tehly: 2 rady tehál na dlaždicu, posunuté o pol tehly.
+    auto bricks = [&](int tile, int variant, int seed) {
+        p.fill(tile, [&](int x, int y) {
+            int row = y / 8;
+            int ox = (x + row * 4) % 8;
+            bool seam = y % 8 == 0 || ox == 0;
+            Rgb c = seam ? Rgb{84, 84, 86} : Rgb{136, 136, 138};
+            if (variant == 1 && !seam && rand01(x / 2, y / 2, seed) < 0.3f) c = {78, 116, 56};      // mach
+            if (variant == 2 && !seam && rand01(x, y, seed) < 0.12f) c = {70, 70, 72};              // praskliny
+            p.put(tile, x, y, c, 6, seed + 1);
+        });
+    };
+    bricks(TILE_STONE_BRICKS, 0, 55);
+    bricks(TILE_MOSSY_STONE_BRICKS, 1, 56);
+    bricks(TILE_CRACKED_STONE_BRICKS, 2, 57);
+
+    // Sklo: priehľadné s rámom a odleskom.
+    p.fill(TILE_GLASS, [&](int x, int y) {
+        bool frame = x == 0 || y == 0 || x == 15 || y == 15;
+        bool glint = (x + y == 5 || x + y == 6 || x + y == 9) && x > 1 && y > 1 && x < 10;
+        if (frame) p.put(TILE_GLASS, x, y, {200, 222, 228}, 6, 58);
+        else if (glint) p.put(TILE_GLASS, x, y, {236, 248, 252}, 0, 58);
+        else p.put(TILE_GLASS, x, y, {0, 0, 0}, 0, 58, 0);
+    });
+
+    // Lampáš: tmavý kovový rám a žiariace teplé jadro.
+    p.fill(TILE_LANTERN, [&](int x, int y) {
+        bool frame = x <= 1 || x >= 14 || y <= 1 || y >= 14 || x == 7 || x == 8;
+        float d = std::hypot(x - 7.5f, y - 7.5f);
+        Rgb glow{255, (int)(236 - d * 9), (int)(150 - d * 12)};
+        p.put(TILE_LANTERN, x, y, frame ? Rgb{58, 52, 48} : glow, frame ? 6 : 4, 59);
+    });
+
     return img;
 }
 

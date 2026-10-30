@@ -34,6 +34,15 @@ enum class BlockId : uint8_t {
     TerracottaYellow,
     TerracottaWhite,
     TerracottaBrown,
+    OakPlanks,
+    SprucePlanks,
+    Cobblestone,
+    MossyCobblestone,
+    StoneBricks,
+    MossyStoneBricks,
+    CrackedStoneBricks,
+    Glass,
+    Lantern,
     Count
 };
 
@@ -71,6 +80,15 @@ enum Tile : int {
     TILE_TERRACOTTA_YELLOW,
     TILE_TERRACOTTA_WHITE,
     TILE_TERRACOTTA_BROWN,
+    TILE_OAK_PLANKS,
+    TILE_SPRUCE_PLANKS,
+    TILE_COBBLESTONE,
+    TILE_MOSSY_COBBLESTONE,
+    TILE_STONE_BRICKS,
+    TILE_MOSSY_STONE_BRICKS,
+    TILE_CRACKED_STONE_BRICKS,
+    TILE_GLASS,
+    TILE_LANTERN,
     TILE_COUNT
 };
 
@@ -79,11 +97,13 @@ struct BlockType {
     bool solid;      // dá sa doň naraziť (fyzika)
     bool opaque;     // úplne zakrýva steny susedov
     bool liquid;     // kreslí sa v priesvitnom pass-e
-    bool leaves;     // listy: dierky v textúre, nezakrývajú susedov
+    bool cutout;     // listy, sklo: dierky v textúre, nezakrývajú susedov
     bool breakable;
     int tileTop;
     int tileSide;
     int tileBottom;
+    // Farba vyžarovaného svetla 0–15 na kanál (0,0,0 = nesvieti).
+    uint8_t lightR = 0, lightG = 0, lightB = 0;
 };
 
 const BlockType& blockType(BlockId id);
@@ -91,6 +111,11 @@ const BlockType& blockType(BlockId id);
 inline bool isSolid(BlockId id) { return blockType(id).solid; }
 inline bool isOpaque(BlockId id) { return blockType(id).opaque; }
 inline bool isLiquid(BlockId id) { return blockType(id).liquid; }
-inline bool isLeaves(BlockId id) { return blockType(id).leaves; }
+inline bool isCutout(BlockId id) { return blockType(id).cutout; }
+inline bool emitsLight(BlockId id)
+{
+    const BlockType& t = blockType(id);
+    return t.lightR | t.lightG | t.lightB;
+}
 
 } // namespace cubiq

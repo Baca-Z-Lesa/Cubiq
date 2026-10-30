@@ -129,8 +129,8 @@ struct BlockInteraction {
 
 static void giveStarterItems(Inventory& inventory)
 {
-    const BlockId starter[] = {BlockId::Grass, BlockId::Dirt, BlockId::Stone, BlockId::OakLog, BlockId::OakLeaves,
-                               BlockId::CherryLeaves, BlockId::Sand, BlockId::Terracotta, BlockId::AetheriteOre};
+    const BlockId starter[] = {BlockId::Grass, BlockId::Stone, BlockId::OakPlanks, BlockId::OakLog, BlockId::StoneBricks,
+                               BlockId::Glass, BlockId::Lantern, BlockId::CherryLeaves, BlockId::AetheriteOre};
     for (BlockId id : starter) inventory.add(id, Inventory::MAX_STACK);
 }
 

@@ -1,6 +1,7 @@
 #include "World/TerrainGenerator.h"
 #include "World/Chunk.h"
 #include "World/Features.h"
+#include "World/Structures.h"
 
 #include <algorithm>
 #include <cmath>
@@ -516,6 +517,7 @@ void TerrainGenerator::generate(Chunk& chunk) const
 
     placeOres(chunk, m_seed);
     placeTrees(chunk, *this);
+    placeStructures(chunk, *this);
 }
 
 } // namespace cubiq

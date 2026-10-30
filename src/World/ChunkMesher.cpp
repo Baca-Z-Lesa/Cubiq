@@ -30,7 +30,7 @@ namespace {
     bool occludes(BlockId id)
     {
         const BlockType& t = blockType(id);
-        return t.opaque || t.leaves;
+        return t.opaque || (t.cutout && id != BlockId::Glass); // listy tienia, sklo nie
     }
 }
 
@@ -93,7 +93,7 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
                     BlockId nb = in.at(n.x, n.y, n.z);
                     // Pevný blok: stena je vidno cez vzduch, vodu aj listy.
                     // Voda a listy: stena nie je medzi dvoma rovnakými blokmi.
-                    if (isOpaque(nb) || ((liquid || type.leaves) && nb == id))
+                    if (isOpaque(nb) || ((liquid || type.cutout) && nb == id))
                         continue;
 
                     int tile = face.kind == FaceKind::Top    ? type.tileTop
