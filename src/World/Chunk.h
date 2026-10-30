@@ -49,6 +49,7 @@ public:
     std::unique_ptr<Mesh> liquidMesh; // voda a láva (kreslí sa až po teréne)
     bool dirty = true;    // mesh treba prestavať
     bool meshing = false; // mesh sa práve stavia vo vlákne
+    bool modified = false; // hráč ho zmenil → treba ho uložiť
 
 private:
     static int index(int x, int y, int z) { return (y * SIZE_Z + z) * SIZE_X + x; }

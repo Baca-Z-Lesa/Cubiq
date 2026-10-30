@@ -13,13 +13,22 @@ namespace {
     glm::vec2 g_mouseDelta{0.0f};
     bool g_firstMouse = true;
     float g_scroll = 0.0f;
+    std::string g_typed;
+    int g_backspaces = 0;
 
     void scrollCallback(GLFWwindow*, double, double y) { g_scroll += (float)y; }
+
+    void charCallback(GLFWwindow*, unsigned int codepoint)
+    {
+        if (codepoint >= 32 && codepoint < 127) g_typed += (char)codepoint;
+    }
 
     void keyCallback(GLFWwindow*, int key, int, int action, int)
     {
         if (key >= 0 && key <= GLFW_KEY_LAST && action == GLFW_PRESS)
             g_keyPressed[key] = true;
+        if (key == GLFW_KEY_BACKSPACE && (action == GLFW_PRESS || action == GLFW_REPEAT))
+            ++g_backspaces;
     }
 
     void mouseButtonCallback(GLFWwindow*, int button, int action, int)
@@ -47,7 +56,11 @@ void Input::attach(GLFWwindow* window)
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorCallback);
     glfwSetScrollCallback(window, scrollCallback);
+    glfwSetCharCallback(window, charCallback);
 }
+
+const std::string& Input::typedText() { return g_typed; }
+int Input::backspaces() { return g_backspaces; }
 
 void Input::beginFrame()
 {
@@ -55,6 +68,8 @@ void Input::beginFrame()
     g_mousePressed.fill(false);
     g_mouseDelta = glm::vec2(0.0f);
     g_scroll = 0.0f;
+    g_typed.clear();
+    g_backspaces = 0;
 }
 
 void Input::resetMouseDelta()

@@ -16,13 +16,16 @@ namespace cubiq {
 
 class World;
 class TerrainGenerator;
+class WorldStorage;
 
 // Načítava chunky okolo hráča a uvoľňuje vzdialené.
 // Generovanie aj stavba meshov bežia vo vláknach na pozadí; hlavné vlákno len
 // pripraví kópiu dát (snapshot) a hotový mesh nahrá na GPU (OpenGL ide len z hlavného vlákna).
 class ChunkManager {
 public:
-    ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles);
+    // storage môže byť nullptr (svet sa neukladá – napr. pozadie menu).
+    ChunkManager(World& world, const TerrainGenerator& generator, WorldStorage* storage, int renderDistance,
+                 int atlasTiles);
     ~ChunkManager();
 
     ChunkManager(const ChunkManager&) = delete;
@@ -34,6 +37,9 @@ public:
     void setRenderDistance(int chunks);
 
     size_t pendingCount();
+
+    // Uloží všetky zmenené načítané chunky a zapíše ich na disk.
+    void saveAll();
 
     // Štatistika meshingu (pre debug v titulku).
     int meshedTotal() const { return m_meshedTotal; }
@@ -55,6 +61,7 @@ private:
 
     World& m_world;
     const TerrainGenerator& m_generator;
+    WorldStorage* m_storage;
     int m_renderDistance;
     int m_atlasTiles;
     glm::ivec2 m_lastCenter{INT32_MAX, INT32_MAX};

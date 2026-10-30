@@ -1,6 +1,7 @@
 #include "World/ChunkManager.h"
 #include "World/TerrainGenerator.h"
 #include "World/World.h"
+#include "World/WorldStorage.h"
 
 #include <algorithm>
 #include <chrono>
@@ -23,8 +24,9 @@ namespace {
     }
 }
 
-ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles)
-    : m_world(world), m_generator(generator), m_renderDistance(renderDistance), m_atlasTiles(atlasTiles)
+ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, WorldStorage* storage,
+                           int renderDistance, int atlasTiles)
+    : m_world(world), m_generator(generator), m_storage(storage), m_renderDistance(renderDistance), m_atlasTiles(atlasTiles)
 {
     // Dve jadrá nechávame voľné: hlavnej slučke a ovládaču grafiky.
     unsigned hw = std::thread::hardware_concurrency();
@@ -124,7 +126,23 @@ void ChunkManager::unloadFar(glm::ivec2 center)
     m_world.forEachChunk([&](Chunk& c) {
         if (distSq(c.coord(), center) > r * r) toRemove.push_back(c.coord());
     });
-    for (glm::ivec2 c : toRemove) m_world.removeChunk(c);
+    for (glm::ivec2 c : toRemove) {
+        // Zmenený chunk si pred uvoľnením zapamätáme, inak by sa zmeny stratili.
+        Chunk* chunk = m_world.getChunk(c);
+        if (m_storage && chunk && chunk->modified) m_storage->store(*chunk);
+        m_world.removeChunk(c);
+    }
+}
+
+void ChunkManager::saveAll()
+{
+    if (!m_storage) return;
+    m_world.forEachChunk([&](Chunk& c) {
+        if (!c.modified) return;
+        m_storage->store(c);
+        c.modified = false;
+    });
+    m_storage->flush();
 }
 
 void ChunkManager::scheduleMeshes(glm::ivec2 center)
@@ -215,7 +233,12 @@ void ChunkManager::workerLoop()
 
         // Chunk ešte nie je vo svete, takže ho vlákno vlastní len ono – netreba zámok.
         auto chunk = std::make_unique<Chunk>(genCoord);
-        m_generator.generate(*chunk);
+        if (m_storage && m_storage->load(genCoord, *chunk)) {
+            m_generator.fillTints(*chunk); // uložený chunk zo súboru
+        } else {
+            chunk = std::make_unique<Chunk>(genCoord); // (aj keď bol súbor poškodený)
+            m_generator.generate(*chunk);
+        }
 
         std::lock_guard lock(m_mutex);
         m_finished.push_back(std::move(chunk));

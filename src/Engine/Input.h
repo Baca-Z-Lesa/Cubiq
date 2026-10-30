@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/vec2.hpp>
+#include <string>
 
 struct GLFWwindow;
 
@@ -19,6 +20,10 @@ public:
     static glm::vec2 mouseDelta();
     static glm::vec2 mousePosition();     // v pixeloch okna, (0,0) vľavo hore
     static float scrollDelta();           // koliesko za túto snímku (+ hore)
+
+    // Písanie textu: znaky napísané za túto snímku (len ASCII) a počet stlačení Backspace (aj podržaním).
+    static const std::string& typedText();
+    static int backspaces();
 };
 
 } // namespace cubiq

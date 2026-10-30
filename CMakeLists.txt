@@ -57,6 +57,7 @@ add_library(CubiqWorld STATIC
     src/World/Physics.cpp
     src/World/Features.cpp
     src/World/Structures.cpp
+    src/World/WorldStorage.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 
@@ -70,6 +71,8 @@ add_executable(Cubiq
     src/Game/Player.cpp
     src/Game/DebugOverlay.cpp
     src/Game/Sky.cpp
+    src/Game/SaveGame.cpp
+    src/Game/Gui.cpp
 )
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 

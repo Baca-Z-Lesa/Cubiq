@@ -62,6 +62,9 @@ public:
 
     void generate(Chunk& chunk) const;
 
+    // Len farby trávy (pre chunk načítaný z disku, kde sú bloky už hotové).
+    void fillTints(Chunk& chunk) const;
+
     Column columnAt(int x, int z) const;
     Surface surfaceAt(int x, int z) const;
     int heightAt(int x, int z) const { return columnAt(x, z).height; }

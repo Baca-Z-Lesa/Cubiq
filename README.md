@@ -16,8 +16,11 @@ cmake --build build --config RelWithDebInfo
 build\RelWithDebInfo\Cubiq.exe
 ```
 
-Konkrétny svet: `Cubiq.exe 1337` (seed ako argument, bez neho náhodný).
-Konkrétne miesto: `Cubiq.exe 7 192 96` (seed, x, z) – napr. lietajúce ostrovy v seede 7.
+Bez argumentov sa spustí **hlavné menu** (zoznam svetov, nový svet s názvom a seedom).
+Svety sa ukladajú do `%APPDATA%\Cubiq\saves\<svet>`: `world.dat` (hráč, inventár, čas) a `region/`
+(len zmenené chunky, RLE). Automaticky každú minútu, pri odchode do menu a pri zatvorení okna.
+
+Rýchla hra bez ukladania: `Cubiq.exe 1337` (seed) alebo `Cubiq.exe 7 192 96` (seed, x, z) – napr. lietajúce ostrovy v seede 7.
 
 Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a pritom sa v nej dá ladiť.
 **Debug** je pri načítavaní sveta výrazne pomalší (~20 FPS), používaj ho len keď ladíš konkrétnu chybu.
@@ -40,7 +43,7 @@ Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a 
 | F3 | ladiace informácie (FPS, pozícia, biom, chunky, GPU…) |
 | F11 | celá obrazovka |
 | + / - | väčší / menší dohľad (chunky) |
-| N | nový svet s náhodným seedom |
+| Esc | pauza (uložiť, odísť do menu) |
 | T | posunúť čas o 2 hodiny (deň trvá 20 minút) |
 | Esc | zavrieť inventár / uvoľniť myš (2× = koniec) |
 

@@ -413,6 +413,13 @@ glm::ivec2 TerrainGenerator::findSpawn() const
 
 // ------------------------------------------------------------------ generovanie chunku
 
+void TerrainGenerator::fillTints(Chunk& chunk) const
+{
+    const int baseX = chunk.coord().x * Chunk::SIZE_X, baseZ = chunk.coord().y * Chunk::SIZE_Z;
+    for (int z = 0; z < Chunk::SIZE_Z; ++z)
+        for (int x = 0; x < Chunk::SIZE_X; ++x) chunk.setTint(x, z, columnAt(baseX + x, baseZ + z).tint);
+}
+
 void TerrainGenerator::generate(Chunk& chunk) const
 {
     const int baseX = chunk.coord().x * Chunk::SIZE_X;

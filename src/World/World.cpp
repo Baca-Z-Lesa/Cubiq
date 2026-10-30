@@ -58,6 +58,7 @@ void World::setBlock(int x, int y, int z, BlockId id)
 
     int lx = floorMod(x, Chunk::SIZE_X), lz = floorMod(z, Chunk::SIZE_Z);
     chunk->set(lx, y, lz, id);
+    chunk->modified = true;
 
     // Svetlo sa šíri až 15 blokov – zmena môže presvetliť alebo zatieniť aj susedné chunky.
     for (int dz = -1; dz <= 1; ++dz)
