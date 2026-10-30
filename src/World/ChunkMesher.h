@@ -1,15 +1,21 @@
 #pragma once
 #include "Engine/Mesh.h"
 
-#include <memory>
+#include <cstdint>
+#include <vector>
 
 namespace cubiq {
 
 class Chunk;
 class World;
 
-// Postaví jeden mesh pre celý chunk. Stenu bloku pridá len vtedy,
+struct MeshData {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+};
+
+// Postaví geometriu pre celý chunk (len CPU, bez OpenGL). Stenu bloku pridá len vtedy,
 // keď je za ňou nepevný blok (vzduch) – vnútorné steny sa vôbec nekreslia.
-std::unique_ptr<Mesh> buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles);
+MeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles);
 
 } // namespace cubiq

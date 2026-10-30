@@ -15,6 +15,12 @@ public:
 
     Chunk* getChunk(glm::ivec2 coord) const;
     Chunk& createChunk(glm::ivec2 coord);
+    void insertChunk(std::unique_ptr<Chunk> chunk);
+    void removeChunk(glm::ivec2 coord);
+    size_t chunkCount() const { return m_chunks.size(); }
+
+    // Má chunk všetkých 4 susedov? (až potom sa dá postaviť mesh bez falošných stien na okraji)
+    bool hasAllNeighbors(glm::ivec2 coord) const;
 
     template <typename F>
     void forEachChunk(F&& fn)
@@ -23,10 +29,9 @@ public:
     }
 
     static glm::ivec2 chunkCoordOf(int x, int z);
-
-private:
     static int64_t key(glm::ivec2 c) { return ((int64_t)c.x << 32) | (uint32_t)c.y; }
 
+private:
     std::unordered_map<int64_t, std::unique_ptr<Chunk>> m_chunks;
 };
 

@@ -26,10 +26,12 @@ public:
     void set(int x, int y, int z, BlockId id)
     {
         m_blocks[index(x, y, z)] = id;
+        if (id != BlockId::Air && y > m_maxY) m_maxY = y;
         dirty = true;
     }
 
     glm::ivec2 coord() const { return m_coord; }
+    int maxY() const { return m_maxY; } // najvyšší neprázdny blok (mesher nad ním nič nehľadá)
 
     std::unique_ptr<Mesh> mesh;
     bool dirty = true; // mesh treba prestavať
@@ -38,6 +40,7 @@ private:
     static int index(int x, int y, int z) { return (y * SIZE_Z + z) * SIZE_X + x; }
 
     glm::ivec2 m_coord;
+    int m_maxY = -1;
     std::vector<BlockId> m_blocks;
 };
 

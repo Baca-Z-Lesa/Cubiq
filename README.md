@@ -16,6 +16,8 @@ cmake --build build --config Debug
 build\Debug\Cubiq.exe
 ```
 
+Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× rýchlejší než v Debug.
+
 ## Ovládanie
 
 | Kláves | Akcia |
@@ -25,6 +27,7 @@ build\Debug\Cubiq.exe
 | Space / Shift | hore / dole |
 | Ctrl | rýchlejší let |
 | F1 | wireframe |
+| + / - | väčší / menší dohľad (chunky) |
 | Esc | uvoľniť myš (2× = koniec) |
 | Ľavý klik | znova zamknúť myš |
 

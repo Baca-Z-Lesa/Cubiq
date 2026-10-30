@@ -9,10 +9,13 @@ uniform mat4 uProjection;
 
 out vec2 vUV;
 out float vShade;
+out float vDistance;
 
 void main()
 {
     vUV = aUV;
     vShade = aShade;
-    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
+    vec4 viewPos = uView * uModel * vec4(aPos, 1.0);
+    vDistance = length(viewPos.xyz);
+    gl_Position = uProjection * viewPos;
 }

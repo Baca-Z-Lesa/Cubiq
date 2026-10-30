@@ -10,8 +10,7 @@
 #include "Engine/Texture.h"
 #include "Engine/Window.h"
 #include "Game/BlockAtlas.h"
-#include "World/ChunkMesher.h"
-#include "World/TerrainGenerator.h"
+#include "World/ChunkManager.h"
 #include "World/World.h"
 
 #include <GL/glew.h>
@@ -55,20 +54,17 @@ static int run()
 
     Shader blockShader("assets/shaders/block.vert", "assets/shaders/block.frag");
     Texture atlas(TILE_SIZE * ATLAS_TILES, TILE_SIZE, generateBlockAtlas());
-    // Pevný svet 8x8 chunkov. Vo fáze 4 sa budú chunky načítavať okolo hráča.
-    const int WORLD_RADIUS = 4;
     World world;
-    for (int cx = -WORLD_RADIUS; cx < WORLD_RADIUS; ++cx)
-        for (int cz = -WORLD_RADIUS; cz < WORLD_RADIUS; ++cz)
-            generateTerrain(world.createChunk({cx, cz}));
+    ChunkManager chunks(world, 12, ATLAS_TILES); // render distance v chunkoch
 
     Camera camera({0.5f, 75.0f, 0.5f});
     camera.pitch = -25.0f;
 
+    const glm::vec3 SKY_COLOR(0.53f, 0.75f, 0.98f);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glEnable(GL_MULTISAMPLE);
-    glClearColor(0.53f, 0.75f, 0.98f, 1.0f); // obloha
+    glClearColor(SKY_COLOR.r, SKY_COLOR.g, SKY_COLOR.b, 1.0f);
 
     bool wireframe = false;
     double lastTime = glfwGetTime();
@@ -94,24 +90,33 @@ static int run()
             glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
         }
 
+        // + / - mení dohľad
+        if (Input::wasKeyPressed(GLFW_KEY_KP_ADD) || Input::wasKeyPressed(GLFW_KEY_EQUAL))
+            chunks.setRenderDistance(chunks.renderDistance() + 2);
+        if (Input::wasKeyPressed(GLFW_KEY_KP_SUBTRACT) || Input::wasKeyPressed(GLFW_KEY_MINUS))
+            chunks.setRenderDistance(chunks.renderDistance() - 2);
+
         if (window.isCursorLocked())
             updateCamera(camera, dt);
+
+        chunks.update(camera.position);
 
         // --- Render ---
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        const float viewDistance = (float)(chunks.renderDistance() * Chunk::SIZE_X);
         blockShader.bind();
         blockShader.setMat4("uView", camera.view());
         blockShader.setMat4("uProjection", camera.projection(window.aspect()));
         blockShader.setInt("uAtlas", 0);
+        blockShader.setVec3("uFogColor", SKY_COLOR);
+        blockShader.setFloat("uFogStart", viewDistance * 0.6f);
+        blockShader.setFloat("uFogEnd", viewDistance - 8.0f);
         atlas.bind(0);
 
-        // Jeden draw call na chunk. Mesh sa prestavia len keď sa chunk zmenil.
+        // Jeden draw call na chunk.
         world.forEachChunk([&](Chunk& chunk) {
-            if (chunk.dirty) {
-                chunk.mesh = buildChunkMesh(world, chunk, ATLAS_TILES);
-                chunk.dirty = false;
-            }
+            if (!chunk.mesh) return;
             glm::vec3 origin(chunk.coord().x * Chunk::SIZE_X, 0.0f, chunk.coord().y * Chunk::SIZE_Z);
             blockShader.setMat4("uModel", glm::translate(glm::mat4(1.0f), origin));
             chunk.mesh->draw();
@@ -126,9 +131,12 @@ static int run()
             int faces = 0;
             world.forEachChunk([&](Chunk& chunk) { if (chunk.mesh) faces += chunk.mesh->faceCount(); });
 
-            char title[160];
-            std::snprintf(title, sizeof(title), "Cubiq | %d FPS | XYZ %.1f %.1f %.1f | %d stien",
-                          frames, camera.position.x, camera.position.y, camera.position.z, faces);
+            char title[200];
+            std::snprintf(title, sizeof(title),
+                          "Cubiq | %d FPS | XYZ %.1f %.1f %.1f | %zu chunkov (+%zu) | dohlad %d | %d stien | mesh %d x %.2f + %.2f ms",
+                          frames, camera.position.x, camera.position.y, camera.position.z,
+                          world.chunkCount(), chunks.pendingCount(), chunks.renderDistance(), faces,
+                          chunks.meshedTotal(), chunks.meshMsAverage(), chunks.uploadMsAverage());
             window.setTitle(title);
             frames = 0;
             fpsTimer = 0.0;

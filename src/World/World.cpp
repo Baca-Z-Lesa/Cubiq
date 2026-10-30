@@ -26,6 +26,19 @@ Chunk& World::createChunk(glm::ivec2 coord)
     return *slot;
 }
 
+void World::insertChunk(std::unique_ptr<Chunk> chunk)
+{
+    m_chunks[key(chunk->coord())] = std::move(chunk);
+}
+
+void World::removeChunk(glm::ivec2 coord) { m_chunks.erase(key(coord)); }
+
+bool World::hasAllNeighbors(glm::ivec2 coord) const
+{
+    return getChunk(coord + glm::ivec2(1, 0)) && getChunk(coord + glm::ivec2(-1, 0)) &&
+           getChunk(coord + glm::ivec2(0, 1)) && getChunk(coord + glm::ivec2(0, -1));
+}
+
 BlockId World::getBlock(int x, int y, int z) const
 {
     if (y < 0 || y >= Chunk::SIZE_Y) return BlockId::Air;

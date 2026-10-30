@@ -23,10 +23,11 @@ namespace {
     };
 }
 
-std::unique_ptr<Mesh> buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles)
+MeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles)
 {
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
+    MeshData data;
+    auto& vertices = data.vertices;
+    auto& indices = data.indices;
 
     const int baseX = chunk.coord().x * Chunk::SIZE_X;
     const int baseZ = chunk.coord().y * Chunk::SIZE_Z;
@@ -37,7 +38,7 @@ std::unique_ptr<Mesh> buildChunkMesh(const World& world, const Chunk& chunk, int
         return world.getBlock(baseX + x, y, baseZ + z);
     };
 
-    for (int y = 0; y < Chunk::SIZE_Y; ++y) {
+    for (int y = 0; y <= chunk.maxY(); ++y) {
         for (int z = 0; z < Chunk::SIZE_Z; ++z) {
             for (int x = 0; x < Chunk::SIZE_X; ++x) {
                 BlockId id = chunk.get(x, y, z);
@@ -66,7 +67,7 @@ std::unique_ptr<Mesh> buildChunkMesh(const World& world, const Chunk& chunk, int
         }
     }
 
-    return std::make_unique<Mesh>(vertices, indices);
+    return data;
 }
 
 } // namespace cubiq

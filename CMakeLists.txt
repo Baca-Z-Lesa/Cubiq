@@ -45,6 +45,7 @@ add_library(CubiqWorld STATIC
     src/World/World.cpp
     src/World/ChunkMesher.cpp
     src/World/TerrainGenerator.cpp
+    src/World/ChunkManager.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 
