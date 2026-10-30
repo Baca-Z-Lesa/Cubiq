@@ -14,6 +14,7 @@
 #include "Game/BlockHighlight.h"
 #include "Game/Hud.h"
 #include "Game/Inventory.h"
+#include "Game/Player.h"
 #include "World/ChunkManager.h"
 #include "World/Raycast.h"
 #include "World/TerrainGenerator.h"
@@ -34,28 +35,32 @@
 
 using namespace cubiq;
 
-static void updateCamera(Camera& camera, float dt)
+static void mouseLook(Camera& camera)
 {
     const float sensitivity = 0.1f;
     glm::vec2 md = Input::mouseDelta();
     camera.rotate(md.x * sensitivity, -md.y * sensitivity);
+}
 
-    // Pohyb ako v creative móde: horizontálne podľa smeru pohľadu, hore/dole zvlášť.
-    glm::vec3 flatForward = glm::normalize(glm::vec3(camera.forward().x, 0.0f, camera.forward().z));
-    glm::vec3 right = camera.right();
-    glm::vec3 move{0.0f};
+static Player::Controls readControls(bool active)
+{
+    Player::Controls c;
+    if (!active) return c;
+    if (Input::isKeyDown(GLFW_KEY_W)) c.move.y += 1.0f;
+    if (Input::isKeyDown(GLFW_KEY_S)) c.move.y -= 1.0f;
+    if (Input::isKeyDown(GLFW_KEY_D)) c.move.x += 1.0f;
+    if (Input::isKeyDown(GLFW_KEY_A)) c.move.x -= 1.0f;
+    c.jump = Input::isKeyDown(GLFW_KEY_SPACE);
+    c.sneak = Input::isKeyDown(GLFW_KEY_LEFT_SHIFT);
+    c.sprint = Input::isKeyDown(GLFW_KEY_LEFT_CONTROL);
+    return c;
+}
 
-    if (Input::isKeyDown(GLFW_KEY_W)) move += flatForward;
-    if (Input::isKeyDown(GLFW_KEY_S)) move -= flatForward;
-    if (Input::isKeyDown(GLFW_KEY_D)) move += right;
-    if (Input::isKeyDown(GLFW_KEY_A)) move -= right;
-    if (Input::isKeyDown(GLFW_KEY_SPACE)) move.y += 1.0f;
-    if (Input::isKeyDown(GLFW_KEY_LEFT_SHIFT)) move.y -= 1.0f;
-
-    if (glm::length(move) > 0.0f) {
-        float speed = Input::isKeyDown(GLFW_KEY_LEFT_CONTROL) ? 20.0f : 6.0f;
-        camera.position += glm::normalize(move) * speed * dt;
-    }
+// Fyzika beží až keď je chunk pod hráčom vygenerovaný a má mesh – inak by prepadol do prázdna.
+static bool worldReadyAt(const World& world, const glm::vec3& pos)
+{
+    const Chunk* chunk = world.getChunk(World::chunkCoordOf((int)std::floor(pos.x), (int)std::floor(pos.z)));
+    return chunk && chunk->mesh;
 }
 
 // Svet = bloky + generátor + streaming chunkov. Pri novom seede sa celý vymení.
@@ -70,12 +75,14 @@ struct GameWorld {
     }
 };
 
-static void spawnCamera(Camera& camera, const TerrainGenerator& generator)
+static void spawnPlayer(Player& player, Camera& camera, const TerrainGenerator& generator)
 {
     glm::ivec2 spawn = generator.findSpawn();
     int ground = std::max(generator.heightAt(spawn.x, spawn.y), TerrainGenerator::SEA_LEVEL);
-    camera.position = glm::vec3(spawn.x + 0.5f, ground + 20.0f, spawn.y + 0.5f);
-    camera.pitch = -25.0f;
+    player.teleport(glm::vec3(spawn.x + 0.5f, ground + 1.0f, spawn.y + 0.5f));
+    player.flying = false;
+    camera.position = player.eyePosition();
+    camera.pitch = -10.0f;
 }
 
 static uint32_t randomSeed() { return std::random_device{}(); }
@@ -87,7 +94,7 @@ struct BlockInteraction {
     float breakCooldown = 0.0f;
     float placeCooldown = 0.0f;
 
-    void update(World& world, const Camera& camera, Inventory& inventory, const RaycastHit& hit, float dt)
+    void update(World& world, const Player& player, Inventory& inventory, const RaycastHit& hit, float dt)
     {
         breakCooldown -= dt;
         placeCooldown -= dt;
@@ -106,11 +113,10 @@ struct BlockInteraction {
         if (placeNow && hit.hit) {
             ItemStack& stack = inventory.selectedStack();
             glm::ivec3 p = hit.block + hit.normal;
-            glm::ivec3 eye((int)std::floor(camera.position.x), (int)std::floor(camera.position.y),
-                           (int)std::floor(camera.position.z));
             BlockId current = world.getBlock(p.x, p.y, p.z);
             bool free = current == BlockId::Air || isLiquid(current);
-            if (!stack.empty() && free && p != eye && p.y >= 0 && p.y < Chunk::SIZE_Y) {
+            bool insidePlayer = AABB::block(p).intersects(player.bounds()); // nezamurovať sa
+            if (!stack.empty() && free && !insidePlayer && p.y >= 0 && p.y < Chunk::SIZE_Y) {
                 world.setBlock(p.x, p.y, p.z, stack.id);
                 if (--stack.count == 0) stack.clear();
                 placeCooldown = REPEAT;
@@ -137,7 +143,8 @@ static int run(uint32_t seed)
     auto game = std::make_unique<GameWorld>(seed, 12); // render distance v chunkoch
 
     Camera camera;
-    spawnCamera(camera, game->generator);
+    Player player;
+    spawnPlayer(player, camera, game->generator);
 
     UIRenderer ui;
     Hud hud;
@@ -207,9 +214,13 @@ static int run(uint32_t seed)
             int rd = chunks.renderDistance();
             game.reset(); // najskôr zastaví vlákna starého sveta
             game = std::make_unique<GameWorld>(randomSeed(), rd);
-            spawnCamera(camera, game->generator);
+            spawnPlayer(player, camera, game->generator);
             continue;
         }
+
+        // F = prepnúť lietanie
+        if (Input::wasKeyPressed(GLFW_KEY_F))
+            player.toggleFlying();
 
         // Výber v hotbare: 1–9 alebo koliesko.
         for (int i = 0; i < Inventory::HOTBAR; ++i)
@@ -217,10 +228,21 @@ static int run(uint32_t seed)
         if (float scroll = Input::scrollDelta(); scroll != 0.0f && !inventoryOpen)
             inventory.select(inventory.selected() + (scroll > 0 ? -1 : 1));
 
-        if (window.isCursorLocked())
-            updateCamera(camera, dt);
+        const bool playing = window.isCursorLocked() && !inventoryOpen;
+        if (playing)
+            mouseLook(camera);
 
-        chunks.update(camera.position);
+        if (worldReadyAt(game->world, player.position)) {
+            glm::vec3 flatForward = glm::normalize(glm::vec3(camera.forward().x, 0.0f, camera.forward().z));
+            player.update(game->world, readControls(playing), flatForward, camera.right(), dt);
+        }
+        camera.position = player.eyePosition();
+
+        // Pri šprinte sa zorné pole trochu rozšíri.
+        float targetFov = player.sprinting ? 80.0f : 70.0f;
+        camera.fov += (targetFov - camera.fov) * std::min(1.0f, dt * 10.0f);
+
+        chunks.update(player.position);
 
         // Na ktorý blok sa pozeráme.
         RaycastHit hit = raycast(game->world, camera.position, camera.forward(), BlockInteraction::REACH);
@@ -231,7 +253,7 @@ static int run(uint32_t seed)
                 if (slot >= 0) inventory.clickSlot(slot, held);
             }
         } else if (window.isCursorLocked() && !clickConsumed) {
-            interaction.update(game->world, camera, inventory, hit, dt);
+            interaction.update(game->world, player, inventory, hit, dt);
         }
 
         // --- Render ---
@@ -298,8 +320,9 @@ static int run(uint32_t seed)
 
             char title[300];
             std::snprintf(title, sizeof(title),
-                          "Cubiq | %d FPS | XYZ %.0f %.0f %.0f | %s | ciel: %s | seed %u | %zu chunkov (+%zu) | dohlad %d | %d stien | mesh %.2f ms",
-                          frames, camera.position.x, camera.position.y, camera.position.z,
+                          "Cubiq | %d FPS | XYZ %.1f %.1f %.1f | %s | %s | ciel: %s | seed %u | %zu chunkov (+%zu) | dohlad %d | %d stien | mesh %.2f ms",
+                          frames, player.position.x, player.position.y, player.position.z,
+                          player.flying ? "let" : player.inWater ? "plavanie" : player.onGround ? "na zemi" : "vo vzduchu",
                           biomeName(biome), hit.hit ? blockType(hit.id).name : "-", game->generator.seed(),
                           game->world.chunkCount(), chunks.pendingCount(), chunks.renderDistance(), faces,
                           chunks.meshMsAverage());

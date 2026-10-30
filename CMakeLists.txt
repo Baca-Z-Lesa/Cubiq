@@ -49,6 +49,7 @@ add_library(CubiqWorld STATIC
     src/World/ChunkManager.cpp
     src/World/Noise.cpp
     src/World/Raycast.cpp
+    src/World/Physics.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 
@@ -59,6 +60,7 @@ add_executable(Cubiq
     src/Game/BlockHighlight.cpp
     src/Game/Inventory.cpp
     src/Game/Hud.cpp
+    src/Game/Player.cpp
 )
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 
