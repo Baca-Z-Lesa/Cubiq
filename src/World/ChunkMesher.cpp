@@ -46,16 +46,25 @@ MeshInput snapshotChunk(const World& world, const Chunk& chunk)
     // Stačí kopírovať po maxY + 1 (vyššie nie je čo kresliť ani čo by tienilo).
     const int topY = std::min(chunk.maxY() + 1, Chunk::SIZE_Y - 1);
 
-    for (int pz = -1; pz <= Chunk::SIZE_Z; ++pz) {
-        for (int px = -1; px <= Chunk::SIZE_X; ++px) {
-            // Z ktorého chunku (stred alebo jeden z 8 susedov) je tento stĺpec.
-            int dx = px < 0 ? -1 : px >= Chunk::SIZE_X ? 1 : 0;
+    // 3×3 chunky okolo (stred + 8 susedov); chýbajúci = vzduch.
+    const Chunk* n[3][3];
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx)
+            n[dz + 1][dx + 1] = (dx == 0 && dz == 0) ? &chunk : world.getChunk(chunk.coord() + glm::ivec2(dx, dz));
+
+    // Kopírujeme po riadkoch: 1 blok zľava, 16 zo stredu, 1 sprava.
+    BlockId* out = in.blocks.data();
+    for (int y = 0; y <= topY; ++y) {
+        for (int pz = -1; pz <= Chunk::SIZE_Z; ++pz) {
             int dz = pz < 0 ? -1 : pz >= Chunk::SIZE_Z ? 1 : 0;
-            const Chunk* src = (dx == 0 && dz == 0) ? &chunk : world.getChunk(chunk.coord() + glm::ivec2(dx, dz));
-            if (!src) continue;
-            int lx = px - dx * Chunk::SIZE_X, lz = pz - dz * Chunk::SIZE_Z;
-            for (int y = 0; y <= topY; ++y)
-                in.blocks[(y * MeshInput::PZ + (pz + 1)) * MeshInput::PX + (px + 1)] = src->get(lx, y, lz);
+            int lz = pz - dz * Chunk::SIZE_Z;
+            BlockId* dst = out + (y * MeshInput::PZ + (pz + 1)) * MeshInput::PX;
+            const Chunk* left = n[dz + 1][0];
+            const Chunk* mid = n[dz + 1][1];
+            const Chunk* right = n[dz + 1][2];
+            if (left) dst[0] = left->row(y, lz)[Chunk::SIZE_X - 1];
+            if (mid) std::copy_n(mid->row(y, lz), Chunk::SIZE_X, dst + 1);
+            if (right) dst[MeshInput::PX - 1] = right->row(y, lz)[0];
         }
     }
     return in;

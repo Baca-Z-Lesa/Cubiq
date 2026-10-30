@@ -5,6 +5,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace cubiq {
 
@@ -19,10 +26,16 @@ namespace {
 ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles)
     : m_world(world), m_generator(generator), m_renderDistance(renderDistance), m_atlasTiles(atlasTiles)
 {
-    // Jedno vlákno nechávame hlavnej slučke.
-    unsigned threads = std::max(1u, std::thread::hardware_concurrency() - 1);
-    for (unsigned i = 0; i < threads; ++i)
+    // Dve jadrá nechávame voľné: hlavnej slučke a ovládaču grafiky.
+    unsigned hw = std::thread::hardware_concurrency();
+    unsigned threads = hw > 3 ? hw - 2 : 1;
+    for (unsigned i = 0; i < threads; ++i) {
         m_workers.emplace_back(&ChunkManager::workerLoop, this);
+#ifdef _WIN32
+        // Nižšia priorita: keď je CPU plné, hlavné vlákno (plynulosť hry) má prednosť.
+        SetThreadPriority((HANDLE)m_workers.back().native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+    }
 }
 
 ChunkManager::~ChunkManager()
@@ -107,11 +120,11 @@ void ChunkManager::unloadFar(glm::ivec2 center)
 {
     // Rezerva +3, aby sa chunky neuvoľňovali a nenačítavali stále dookola na hranici.
     const int r = m_renderDistance + 3;
-    std::vector<glm::ivec2> far;
+    std::vector<glm::ivec2> toRemove;
     m_world.forEachChunk([&](Chunk& c) {
-        if (distSq(c.coord(), center) > r * r) far.push_back(c.coord());
+        if (distSq(c.coord(), center) > r * r) toRemove.push_back(c.coord());
     });
-    for (glm::ivec2 c : far) m_world.removeChunk(c);
+    for (glm::ivec2 c : toRemove) m_world.removeChunk(c);
 }
 
 void ChunkManager::scheduleMeshes(glm::ivec2 center)
@@ -130,9 +143,11 @@ void ChunkManager::scheduleMeshes(glm::ivec2 center)
         return distSq(a->coord(), center) < distSq(b->coord(), center);
     });
 
+    // Snapshot stojí hlavné vlákno trochu času – max. pár za snímku.
+    const int MAX_SNAPSHOTS_PER_FRAME = 4;
     std::vector<std::unique_ptr<MeshInput>> jobs;
     for (Chunk* c : todo) {
-        if (m_meshInFlight + (int)jobs.size() >= maxInFlight) break;
+        if (m_meshInFlight + (int)jobs.size() >= maxInFlight || (int)jobs.size() >= MAX_SNAPSHOTS_PER_FRAME) break;
         jobs.push_back(std::make_unique<MeshInput>(snapshotChunk(m_world, *c)));
         c->dirty = false;
         c->meshing = true;
@@ -149,10 +164,14 @@ void ChunkManager::scheduleMeshes(glm::ivec2 center)
 
 void ChunkManager::uploadMeshes()
 {
+    // Nahrávanie na GPU tiež niečo stojí – max. pár meshov za snímku, zvyšok nabudúce.
+    const size_t MAX_UPLOADS_PER_FRAME = 6;
     std::vector<MeshResult> results;
     {
         std::lock_guard lock(m_mutex);
-        results.swap(m_meshResults);
+        size_t n = std::min(MAX_UPLOADS_PER_FRAME, m_meshResults.size());
+        std::move(m_meshResults.begin(), m_meshResults.begin() + n, std::back_inserter(results));
+        m_meshResults.erase(m_meshResults.begin(), m_meshResults.begin() + n);
     }
     for (MeshResult& r : results) {
         --m_meshInFlight;

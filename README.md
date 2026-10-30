@@ -12,14 +12,15 @@ Závislosti sa stiahnu automaticky cez CMake FetchContent (treba internet a git)
 
 ```
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Debug
-build\Debug\Cubiq.exe
+cmake --build build --config RelWithDebInfo
+build\RelWithDebInfo\Cubiq.exe
 ```
 
 Konkrétny svet: `Cubiq.exe 1337` (seed ako argument, bez neho náhodný).
 Konkrétne miesto: `Cubiq.exe 7 192 96` (seed, x, z) – napr. lietajúce ostrovy v seede 7.
 
-Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× rýchlejší než v Debug.
+Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a pritom sa v nej dá ladiť.
+**Debug** je pri načítavaní sveta výrazne pomalší (~20 FPS), používaj ho len keď ladíš konkrétnu chybu.
 
 ## Ovládanie
 

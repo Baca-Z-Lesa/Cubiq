@@ -34,6 +34,9 @@ public:
         ++m_version;
     }
 
+    // Riadok 16 blokov pozdĺž X (pre rýchle kopírovanie celých riadkov).
+    const BlockId* row(int y, int z) const { return &m_blocks[index(0, y, z)]; }
+
     glm::ivec2 coord() const { return m_coord; }
     int maxY() const { return m_maxY; } // najvyšší neprázdny blok (mesher nad ním nič nehľadá)
     uint32_t version() const { return m_version; }

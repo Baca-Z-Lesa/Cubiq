@@ -5,6 +5,7 @@
 #endif
 
 #include "Engine/Camera.h"
+#include "Engine/Frustum.h"
 #include "Engine/Input.h"
 #include "Engine/Shader.h"
 #include "Engine/Texture.h"
@@ -167,6 +168,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
     double lastTime = glfwGetTime();
     double fpsTimer = 0.0;
     int frames = 0;
+    double updateMs = 0.0, renderMs = 0.0; // priemerné časy častí snímky (v titulku)
 
     auto setInventoryOpen = [&](bool open) {
         inventoryOpen = open;
@@ -246,7 +248,9 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         float targetFov = player.sprinting ? 80.0f : 70.0f;
         camera.fov += (targetFov - camera.fov) * std::min(1.0f, dt * 10.0f);
 
+        double tUpdate0 = glfwGetTime();
         chunks.update(player.position);
+        updateMs += (glfwGetTime() - tUpdate0) * 1000.0;
 
         // Na ktorý blok sa pozeráme.
         RaycastHit hit = raycast(game->world, camera.position, camera.forward(), BlockInteraction::REACH);
@@ -261,6 +265,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         }
 
         // --- Render ---
+        double tRender0 = glfwGetTime();
         const bool underwater = isLiquid(game->world.getBlock(
             (int)std::floor(camera.position.x), (int)std::floor(camera.position.y), (int)std::floor(camera.position.z)));
         const float viewDistance = (float)(chunks.renderDistance() * Chunk::SIZE_X);
@@ -278,11 +283,19 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         blockShader.setFloat("uFogEnd", underwater ? 28.0f : viewDistance - 8.0f);
         atlas.bind(0);
 
+        // Kreslia sa len chunky v zornom poli kamery (frustum culling) a v dohľade.
+        const Frustum frustum(camera.projection(window.aspect()) * camera.view());
+        const glm::ivec2 playerChunk = World::chunkCoordOf((int)std::floor(player.position.x), (int)std::floor(player.position.z));
+        const int rd = chunks.renderDistance();
         auto drawChunks = [&](bool liquid) {
             game->world.forEachChunk([&](Chunk& chunk) {
                 Mesh* mesh = liquid ? chunk.liquidMesh.get() : chunk.mesh.get();
                 if (!mesh || mesh->faceCount() == 0) return;
+                glm::ivec2 d = chunk.coord() - playerChunk;
+                if (d.x * d.x + d.y * d.y > rd * rd) return;
                 glm::vec3 origin(chunk.coord().x * Chunk::SIZE_X, 0.0f, chunk.coord().y * Chunk::SIZE_Z);
+                glm::vec3 size(Chunk::SIZE_X, chunk.maxY() + 2.0f, Chunk::SIZE_Z);
+                if (!frustum.intersects(origin, origin + size)) return;
                 blockShader.setMat4("uModel", glm::translate(glm::mat4(1.0f), origin));
                 mesh->draw();
             });
@@ -308,6 +321,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         ui.begin(window.width(), window.height());
         hud.draw(ui, inventory, inventoryOpen, held, Input::mousePosition());
         ui.end(atlas);
+        renderMs += (glfwGetTime() - tRender0) * 1000.0;
 
         window.swapBuffers();
 
@@ -322,17 +336,18 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
             });
             Biome biome = game->generator.biomeAt((int)std::floor(camera.position.x), (int)std::floor(camera.position.z));
 
-            char title[300];
+            char title[360];
             std::snprintf(title, sizeof(title),
-                          "Cubiq | %d FPS | XYZ %.1f %.1f %.1f | %s | %s | ciel: %s | seed %u | %zu chunkov (+%zu) | dohlad %d | %d stien | mesh %.2f ms",
+                          "Cubiq | %d FPS | XYZ %.1f %.1f %.1f | %s | %s | ciel: %s | seed %u | %zu chunkov (+%zu) | dohlad %d | %d stien | chunky %.1f ms, render %.1f ms",
                           frames, player.position.x, player.position.y, player.position.z,
                           player.flying ? "let" : player.inWater ? "plavanie" : player.onGround ? "na zemi" : "vo vzduchu",
                           biomeName(biome), hit.hit ? blockType(hit.id).name : "-", game->generator.seed(),
                           game->world.chunkCount(), chunks.pendingCount(), chunks.renderDistance(), faces,
-                          chunks.meshMsAverage());
+                          updateMs / frames, renderMs / frames);
             window.setTitle(title);
             frames = 0;
             fpsTimer = 0.0;
+            updateMs = renderMs = 0.0;
         }
     }
     return 0;

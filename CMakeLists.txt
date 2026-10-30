@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Prvá konfigurácia je vo Visual Studiu predvolená. RelWithDebInfo je optimalizovaná
+# (Debug je pri generovaní sveta 10–50× pomalší), ale stále sa v nej dá ladiť.
+set(CMAKE_CONFIGURATION_TYPES "RelWithDebInfo;Debug;Release" CACHE STRING "" FORCE)
+
 project(Cubiq LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
