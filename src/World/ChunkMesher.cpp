@@ -218,7 +218,10 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
                 // Hladina je o kúsok nižšie ako plný blok (len keď nad ňou nie je ďalšia tekutina).
                 const bool surface = liquid && in.at(x, y + 1, z) != id;
                 const float topHeight = surface ? 0.875f : 1.0f;
-                const glm::vec3 tint = in.tints[z * Chunk::SIZE_X + x];
+                // Tekutiny tint nepotrebujú – shader vody z neho spozná lávu (x > 1.5).
+                const glm::vec3 tint = !liquid             ? in.tints[z * Chunk::SIZE_X + x]
+                                     : id == BlockId::Lava ? glm::vec3(2.0f)
+                                                           : glm::vec3(1.0f);
                 // Svietiace bloky majú steny osvetlené aspoň vlastným svetlom.
                 const glm::vec3 selfGlow(CURVE.v[type.lightR], CURVE.v[type.lightG], CURVE.v[type.lightB]);
                 const bool glows = type.lightR | type.lightG | type.lightB;

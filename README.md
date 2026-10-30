@@ -41,7 +41,7 @@ Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a 
 | F11 | celá obrazovka |
 | + / - | väčší / menší dohľad (chunky) |
 | N | nový svet s náhodným seedom |
-| T | náhľad noci (vyskúšaj lampáše a svietiaci aetherit) |
+| T | posunúť čas o 2 hodiny (deň trvá 20 minút) |
 | Esc | zavrieť inventár / uvoľniť myš (2× = koniec) |
 
 ## Štruktúra

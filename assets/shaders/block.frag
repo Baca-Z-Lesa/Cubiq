@@ -9,7 +9,8 @@ uniform sampler2D uAtlas;
 uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
-uniform float uSunBrightness; // 1 = deň (v F10 sa bude meniť s časom)
+uniform float uSunBrightness; // 0.06 (noc) .. 1 (deň)
+uniform vec3 uSunColor;       // pri západe slnka oranžová
 
 out vec4 FragColor;
 
@@ -25,8 +26,8 @@ void main()
         color.a = 1.0;
     }
 
-    // Svetlo: slnko (biele, mierne teplé) vs. farebné svetlo zo zdrojov – berie sa silnejšie po kanáloch.
-    vec3 sun = vec3(1.0, 0.98, 0.94) * vLight.x * uSunBrightness;
+    // Svetlo: slnko vs. farebné svetlo zo zdrojov – berie sa silnejšie po kanáloch.
+    vec3 sun = uSunColor * vLight.x * uSunBrightness;
     vec3 light = max(sun, vLight.yzw);
     vec3 lit = color.rgb * vShade * light;
 

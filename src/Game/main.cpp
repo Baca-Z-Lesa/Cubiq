@@ -17,6 +17,7 @@
 #include "Game/Hud.h"
 #include "Game/Inventory.h"
 #include "Game/Player.h"
+#include "Game/Sky.h"
 #include "World/ChunkManager.h"
 #include "World/Raycast.h"
 #include "World/TerrainGenerator.h"
@@ -159,10 +160,14 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
     bool inventoryOpen = false;
     BlockInteraction interaction;
 
-    const glm::vec3 SKY_COLOR(0.53f, 0.75f, 0.98f);
     const glm::vec3 WATER_FOG_COLOR(0.08f, 0.22f, 0.45f);
-    const glm::vec3 NIGHT_SKY_COLOR(0.02f, 0.03f, 0.07f);
-    bool night = false;
+    Shader waterShader("assets/shaders/water.vert", "assets/shaders/water.frag");
+    SkyRenderer skyRenderer;
+
+    // Čas sveta v dňoch (celá časť = počet dní). 0 = východ slnka; začíname ráno.
+    constexpr double DAY_LENGTH_SECONDS = 20.0 * 60.0;
+    double worldTime = 0.08;
+    float animTime = 0.0f; // pre vlny a mraky
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glEnable(GL_MULTISAMPLE);
@@ -236,9 +241,13 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
             continue;
         }
 
-        // T = náhľad noci (kým nie je skutočný cyklus dňa a noci z F10)
+        // Čas plynie; T = posunúť o 2 hodiny.
+        worldTime += dt / DAY_LENGTH_SECONDS;
+        animTime += dt;
         if (Input::wasKeyPressed(GLFW_KEY_T))
-            night = !night;
+            worldTime += 1.0 / 12.0;
+        const float timeOfDay = (float)(worldTime - std::floor(worldTime));
+        const SkyState sky = computeSky(timeOfDay);
 
         // F = prepnúť lietanie
         if (Input::wasKeyPressed(GLFW_KEY_F))
@@ -288,21 +297,28 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         const bool underwater = isLiquid(game->world.getBlock(
             (int)std::floor(camera.position.x), (int)std::floor(camera.position.y), (int)std::floor(camera.position.z)));
         const float viewDistance = (float)(chunks.renderDistance() * Chunk::SIZE_X);
-        const float sunBrightness = night ? 0.06f : 1.0f;
-        const glm::vec3 fogColor = underwater ? WATER_FOG_COLOR * std::max(sunBrightness, 0.3f)
-                                              : (night ? NIGHT_SKY_COLOR : SKY_COLOR);
+        // Hmla má farbu oblohy pri obzore, takže terén v diaľke plynule splynie s oblohou.
+        const glm::vec3 fogColor = underwater ? WATER_FOG_COLOR * std::max(sky.sunBrightness, 0.3f) : sky.horizon;
+        const float fogStart = underwater ? 0.0f : viewDistance * 0.6f;
+        const float fogEnd = underwater ? 28.0f : viewDistance - 8.0f;
+        const glm::mat4 view = camera.view(), projection = camera.projection(window.aspect());
 
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // 0) Obloha (pod vodou len farba hmly).
+        if (!underwater)
+            skyRenderer.drawSky(sky, view, projection, animTime);
+
         blockShader.bind();
-        blockShader.setMat4("uView", camera.view());
-        blockShader.setMat4("uProjection", camera.projection(window.aspect()));
+        blockShader.setMat4("uView", view);
+        blockShader.setMat4("uProjection", projection);
         blockShader.setInt("uAtlas", 0);
         blockShader.setVec3("uFogColor", fogColor);
-        blockShader.setFloat("uSunBrightness", sunBrightness);
-        blockShader.setFloat("uFogStart", underwater ? 0.0f : viewDistance * 0.6f);
-        blockShader.setFloat("uFogEnd", underwater ? 28.0f : viewDistance - 8.0f);
+        blockShader.setFloat("uSunBrightness", sky.sunBrightness);
+        blockShader.setVec3("uSunColor", sky.sunColor);
+        blockShader.setFloat("uFogStart", fogStart);
+        blockShader.setFloat("uFogEnd", fogEnd);
         atlas.bind(0);
 
         // Kreslia sa len chunky v zornom poli kamery (frustum culling) a v dohľade.
@@ -310,6 +326,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         const glm::ivec2 playerChunk = World::chunkCoordOf((int)std::floor(player.position.x), (int)std::floor(player.position.z));
         const int rd = chunks.renderDistance();
         auto drawChunks = [&](bool liquid) {
+            Shader& shader = liquid ? waterShader : blockShader;
             game->world.forEachChunk([&](Chunk& chunk) {
                 Mesh* mesh = liquid ? chunk.liquidMesh.get() : chunk.mesh.get();
                 if (!mesh || mesh->faceCount() == 0) return;
@@ -318,7 +335,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
                 glm::vec3 origin(chunk.coord().x * Chunk::SIZE_X, 0.0f, chunk.coord().y * Chunk::SIZE_Z);
                 glm::vec3 size(Chunk::SIZE_X, chunk.maxY() + 2.0f, Chunk::SIZE_Z);
                 if (!frustum.intersects(origin, origin + size)) return;
-                blockShader.setMat4("uModel", glm::translate(glm::mat4(1.0f), origin));
+                shader.setMat4("uModel", glm::translate(glm::mat4(1.0f), origin));
                 mesh->draw();
             });
         };
@@ -326,7 +343,26 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         // 1) Terén. Jeden draw call na chunk.
         drawChunks(false);
 
-        // 2) Voda: priesvitná, nezapisuje hĺbku a je vidno aj zospodu (keď sa potápaš).
+        // 2) Mraky (pod vodou ich nevidno).
+        if (!underwater)
+            skyRenderer.drawClouds(sky, projection * view, camera.position, viewDistance, animTime);
+
+        // 3) Voda a láva: vlastný shader s vlnami, odrazom oblohy a odleskom slnka.
+        //    Priesvitná, nezapisuje hĺbku a je vidno aj zospodu (keď sa potápaš).
+        waterShader.bind();
+        waterShader.setMat4("uView", view);
+        waterShader.setMat4("uProjection", projection);
+        waterShader.setInt("uAtlas", 0);
+        waterShader.setFloat("uTime", animTime);
+        waterShader.setVec3("uCameraPos", camera.position);
+        waterShader.setVec3("uSunDir", sky.sunDir);
+        waterShader.setVec3("uSunColor", sky.sunColor);
+        waterShader.setFloat("uSunBrightness", sky.sunBrightness);
+        waterShader.setVec3("uZenith", sky.zenith);
+        waterShader.setVec3("uHorizon", sky.horizon);
+        waterShader.setVec3("uFogColor", fogColor);
+        waterShader.setFloat("uFogStart", fogStart);
+        waterShader.setFloat("uFogEnd", fogEnd);
         glEnable(GL_BLEND);
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
@@ -337,7 +373,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
 
         // 3) Obrys bloku pod zameriavačom.
         if (hit.hit && !inventoryOpen)
-            highlight.draw(hit.block, camera.projection(window.aspect()) * camera.view());
+            highlight.draw(hit.block, projection * view);
 
         // 4) UI
         ui.begin(window.width(), window.height());
@@ -357,6 +393,8 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
                                                                       : (fwd.z > 0 ? "juh (+Z)" : "sever (-Z)");
             const TerrainGenerator::Column col = game->generator.columnAt(b.x, b.z);
             const float speed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
+            char clock[8];
+            formatClock(timeOfDay, clock, sizeof(clock));
 
             dbg.left = {
                 fmt("Cubiq  %d FPS  (%.1f ms/snimka)", shownFps, shownFrameMs),
@@ -386,10 +424,11 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
                 fmt("Okno: %d x %d%s", window.width(), window.height(), window.isFullscreen() ? "  (cela obrazovka)" : ""),
                 fmt("CPU vlakna: %u", std::thread::hardware_concurrency()),
                 fmt("Pamat blokov: %.0f MB", game->world.chunkCount() * (double)(Chunk::SIZE_X * Chunk::SIZE_Y * Chunk::SIZE_Z) / (1024.0 * 1024.0)),
-                fmt("FOV: %.0f   %s", camera.fov, night ? "noc (T)" : "den"),
+                fmt("FOV: %.0f", camera.fov),
+                fmt("Cas: %s  den %d  (slnko %.0f%%)", clock, (int)worldTime + 1, sky.sunBrightness * 100.0f),
                 "",
                 "F1 drotovy model   F3 toto okno",
-                "F11 cela obrazovka   T noc",
+                "F11 cela obrazovka   T +2 hodiny",
                 "F let   N novy svet   +/- dohlad",
             };
             dbg.draw(ui);

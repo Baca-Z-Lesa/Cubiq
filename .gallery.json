@@ -25,7 +25,7 @@
     {"text": "F8 · Jaskyne (3D noise), rudy, stromy vrátane obrích pradávnych stromov", "state": 2, "created": 1793344330, "doneAt": 1793347890, "commit": "62f0d0f F7b + F8: veľkolepý terén, jaskyne, rudy, stromy"},
     {"text": "F8b · Štruktúry: dediny, ruiny, veže", "state": 2, "created": 1793346600, "doneAt": 1793362041, "commit": "240d37b F8b: dediny, ruiny a strážne veže"},
     {"text": "F9 · Farebné voxelové svetlo: slnko + lampáše (flood fill), žiariaci aetherit a láva", "state": 2, "created": 1793344330, "doneAt": 1793362398, "commit": "48bdc09 F9: farebné voxelové svetlo"},
-    {"text": "F10 · Deň/noc, obloha, mraky, priehľadná voda so shaderom", "state": 0, "created": 1793344330},
+    {"text": "F10 · Deň/noc, obloha, mraky, priehľadná voda so shaderom", "state": 1, "created": 1793344330},
     {"text": "F11 · Ukladanie sveta na disk (región súbory + kompresia)", "state": 0, "created": 1793344330},
     {"text": "F12 · Výkon: greedy meshing, LOD pre vzdialený terén", "state": 0, "created": 1793344330},
     {"text": "F13 · Entity systém, moby a AI (A* pathfinding)", "state": 0, "created": 1793344330},

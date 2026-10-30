@@ -69,6 +69,7 @@ add_executable(Cubiq
     src/Game/Hud.cpp
     src/Game/Player.cpp
     src/Game/DebugOverlay.cpp
+    src/Game/Sky.cpp
 )
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 
