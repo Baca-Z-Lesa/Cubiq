@@ -39,6 +39,7 @@ Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a 
 | F1 | wireframe |
 | + / - | väčší / menší dohľad (chunky) |
 | N | nový svet s náhodným seedom |
+| T | náhľad noci (vyskúšaj lampáše a svietiaci aetherit) |
 | Esc | zavrieť inventár / uvoľniť myš (2× = koniec) |
 
 ## Štruktúra

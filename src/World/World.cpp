@@ -59,15 +59,12 @@ void World::setBlock(int x, int y, int z, BlockId id)
     int lx = floorMod(x, Chunk::SIZE_X), lz = floorMod(z, Chunk::SIZE_Z);
     chunk->set(lx, y, lz, id);
 
-    // Blok na okraji mení aj viditeľné steny a tiene (AO) suseda – v rohu aj diagonálneho.
-    auto markDirty = [&](int dx, int dz) {
-        if (Chunk* n = getChunk(cc + glm::ivec2(dx, dz))) n->dirty = true;
-    };
-    int ex = lx == 0 ? -1 : lx == Chunk::SIZE_X - 1 ? 1 : 0;
-    int ez = lz == 0 ? -1 : lz == Chunk::SIZE_Z - 1 ? 1 : 0;
-    if (ex) markDirty(ex, 0);
-    if (ez) markDirty(0, ez);
-    if (ex && ez) markDirty(ex, ez);
+    // Svetlo sa šíri až 15 blokov – zmena môže presvetliť alebo zatieniť aj susedné chunky.
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx)
+            if (Chunk* n = getChunk(cc + glm::ivec2(dx, dz))) n->dirty = true;
+    (void)lx;
+    (void)lz;
 }
 
 } // namespace cubiq

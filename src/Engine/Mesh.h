@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 #include <cstdint>
 #include <vector>
 
@@ -11,6 +12,7 @@ struct Vertex {
     glm::vec2 uv;
     float shade;     // tieňovanie podľa strany kocky × ambient occlusion
     glm::vec3 tint;  // farba biómu pre tónované pixely (tráva, listy)
+    glm::vec4 light; // jas: x = slnko, yzw = farebné svetlo zo zdrojov (R, G, B)
 };
 
 // Vertexy + indexy na GPU (VAO/VBO/EBO).

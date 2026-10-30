@@ -159,6 +159,8 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
 
     const glm::vec3 SKY_COLOR(0.53f, 0.75f, 0.98f);
     const glm::vec3 WATER_FOG_COLOR(0.08f, 0.22f, 0.45f);
+    const glm::vec3 NIGHT_SKY_COLOR(0.02f, 0.03f, 0.07f);
+    bool night = false;
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glEnable(GL_MULTISAMPLE);
@@ -221,6 +223,10 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
             continue;
         }
 
+        // T = náhľad noci (kým nie je skutočný cyklus dňa a noci z F10)
+        if (Input::wasKeyPressed(GLFW_KEY_T))
+            night = !night;
+
         // F = prepnúť lietanie
         if (Input::wasKeyPressed(GLFW_KEY_F))
             player.toggleFlying();
@@ -269,7 +275,9 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         const bool underwater = isLiquid(game->world.getBlock(
             (int)std::floor(camera.position.x), (int)std::floor(camera.position.y), (int)std::floor(camera.position.z)));
         const float viewDistance = (float)(chunks.renderDistance() * Chunk::SIZE_X);
-        const glm::vec3 fogColor = underwater ? WATER_FOG_COLOR : SKY_COLOR;
+        const float sunBrightness = night ? 0.06f : 1.0f;
+        const glm::vec3 fogColor = underwater ? WATER_FOG_COLOR * std::max(sunBrightness, 0.3f)
+                                              : (night ? NIGHT_SKY_COLOR : SKY_COLOR);
 
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -279,6 +287,7 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         blockShader.setMat4("uProjection", camera.projection(window.aspect()));
         blockShader.setInt("uAtlas", 0);
         blockShader.setVec3("uFogColor", fogColor);
+        blockShader.setFloat("uSunBrightness", sunBrightness);
         blockShader.setFloat("uFogStart", underwater ? 0.0f : viewDistance * 0.6f);
         blockShader.setFloat("uFogEnd", underwater ? 28.0f : viewDistance - 8.0f);
         atlas.bind(0);
