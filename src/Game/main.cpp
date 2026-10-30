@@ -13,6 +13,7 @@
 #include "Engine/Window.h"
 #include "Game/BlockAtlas.h"
 #include "Game/BlockHighlight.h"
+#include "Game/DebugOverlay.h"
 #include "Game/Hud.h"
 #include "Game/Inventory.h"
 #include "Game/Player.h"
@@ -33,6 +34,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 
 using namespace cubiq;
 
@@ -170,7 +172,14 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
     double lastTime = glfwGetTime();
     double fpsTimer = 0.0;
     int frames = 0;
-    double updateMs = 0.0, renderMs = 0.0; // priemerné časy častí snímky (v titulku)
+    double updateMs = 0.0, renderMs = 0.0; // súčty časov častí snímky za poslednú sekundu
+    // Hodnoty z poslednej celej sekundy (pre F3).
+    int shownFps = 0;
+    double shownUpdateMs = 0.0, shownRenderMs = 0.0, shownFrameMs = 0.0;
+    int shownFaces = 0;
+    bool showDebug = false;
+    const std::string gpuName = (const char*)glGetString(GL_RENDERER);
+    const std::string glVersion = (const char*)glGetString(GL_VERSION);
 
     auto setInventoryOpen = [&](bool open) {
         inventoryOpen = open;
@@ -205,6 +214,10 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
             wireframe = !wireframe;
             glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
         }
+        if (Input::wasKeyPressed(GLFW_KEY_F3))
+            showDebug = !showDebug;
+        if (Input::wasKeyPressed(GLFW_KEY_F11))
+            window.toggleFullscreen();
 
         ChunkManager& chunks = game->chunks;
 
@@ -329,6 +342,58 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
         // 4) UI
         ui.begin(window.width(), window.height());
         hud.draw(ui, inventory, inventoryOpen, held, Input::mousePosition());
+        if (showDebug) {
+            DebugOverlay dbg;
+            auto fmt = [](const char* f, auto... args) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), f, args...);
+                return std::string(buf);
+            };
+            const glm::vec3 p = player.position;
+            const glm::ivec3 b((int)std::floor(p.x), (int)std::floor(p.y), (int)std::floor(p.z));
+            const glm::ivec2 cc = World::chunkCoordOf(b.x, b.z);
+            const glm::vec3 fwd = camera.forward();
+            const char* facing = std::fabs(fwd.x) > std::fabs(fwd.z) ? (fwd.x > 0 ? "vychod (+X)" : "zapad (-X)")
+                                                                      : (fwd.z > 0 ? "juh (+Z)" : "sever (-Z)");
+            const TerrainGenerator::Column col = game->generator.columnAt(b.x, b.z);
+            const float speed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
+
+            dbg.left = {
+                fmt("Cubiq  %d FPS  (%.1f ms/snimka)", shownFps, shownFrameMs),
+                fmt("chunky %.2f ms   render %.2f ms", shownUpdateMs, shownRenderMs),
+                "",
+                fmt("XYZ: %.3f / %.3f / %.3f", p.x, p.y, p.z),
+                fmt("Blok: %d %d %d", b.x, b.y, b.z),
+                fmt("Chunk: %d %d   v chunku: %d %d", cc.x, cc.y, b.x - cc.x * Chunk::SIZE_X, b.z - cc.y * Chunk::SIZE_Z),
+                fmt("Smer: %s   yaw %.1f  pitch %.1f", facing, camera.yaw, camera.pitch),
+                fmt("Rychlost: %.2f b/s  vertikalne %.2f", speed, player.velocity.y),
+                fmt("Stav: %s%s", player.flying ? "let" : player.inWater ? "plavanie" : player.onGround ? "na zemi" : "vo vzduchu",
+                    player.sprinting ? ", sprint" : player.sneaking ? ", zakradanie" : ""),
+                "",
+                fmt("Biom: %s", biomeName(col.biome)),
+                fmt("Vyska terenu: %d   more: %d   snezna ciara: %d", col.height, TerrainGenerator::SEA_LEVEL, col.snowLine),
+                fmt("Teren 3D: %.2f   ostrov: %.2f", col.overhang, col.islandShape),
+                hit.hit ? fmt("Ciel: %s @ %d %d %d", blockType(hit.id).name, hit.block.x, hit.block.y, hit.block.z)
+                        : std::string("Ciel: -"),
+                "",
+                fmt("Seed: %u", game->generator.seed()),
+                fmt("Chunky: %zu nacitanych, %zu v rade, dohlad %d", game->world.chunkCount(), chunks.pendingCount(), chunks.renderDistance()),
+                fmt("Steny: %d   mesh %.2f ms/chunk (%d)", shownFaces, chunks.meshMsAverage(), chunks.meshedTotal()),
+            };
+            dbg.right = {
+                fmt("%s", glVersion.c_str()),
+                fmt("%s", gpuName.c_str()),
+                fmt("Okno: %d x %d%s", window.width(), window.height(), window.isFullscreen() ? "  (cela obrazovka)" : ""),
+                fmt("CPU vlakna: %u", std::thread::hardware_concurrency()),
+                fmt("Pamat blokov: %.0f MB", game->world.chunkCount() * (double)(Chunk::SIZE_X * Chunk::SIZE_Y * Chunk::SIZE_Z) / (1024.0 * 1024.0)),
+                fmt("FOV: %.0f   %s", camera.fov, night ? "noc (T)" : "den"),
+                "",
+                "F1 drotovy model   F3 toto okno",
+                "F11 cela obrazovka   T noc",
+                "F let   N novy svet   +/- dohlad",
+            };
+            dbg.draw(ui);
+        }
         ui.end(atlas);
         renderMs += (glfwGetTime() - tRender0) * 1000.0;
 
@@ -354,6 +419,11 @@ static int run(uint32_t seed, const glm::ivec2* startAt)
                           game->world.chunkCount(), chunks.pendingCount(), chunks.renderDistance(), faces,
                           updateMs / frames, renderMs / frames);
             window.setTitle(title);
+            shownFps = frames;
+            shownUpdateMs = updateMs / frames;
+            shownRenderMs = renderMs / frames;
+            shownFrameMs = fpsTimer * 1000.0 / frames;
+            shownFaces = faces;
             frames = 0;
             fpsTimer = 0.0;
             updateMs = renderMs = 0.0;

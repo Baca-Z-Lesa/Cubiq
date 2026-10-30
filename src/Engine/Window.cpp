@@ -65,6 +65,34 @@ void Window::setCursorLocked(bool locked)
     Input::resetMouseDelta();
 }
 
+void Window::toggleFullscreen()
+{
+    if (!m_fullscreen) {
+        glfwGetWindowPos(m_window, &m_windowedX, &m_windowedY);
+        glfwGetWindowSize(m_window, &m_windowedW, &m_windowedH);
+
+        // Monitor, na ktorom leží stred okna (nie vždy hlavný).
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        GLFWmonitor* target = glfwGetPrimaryMonitor();
+        int cx = m_windowedX + m_windowedW / 2, cy = m_windowedY + m_windowedH / 2;
+        for (int i = 0; i < count; ++i) {
+            int mx, my;
+            glfwGetMonitorPos(monitors[i], &mx, &my);
+            const GLFWvidmode* m = glfwGetVideoMode(monitors[i]);
+            if (cx >= mx && cx < mx + m->width && cy >= my && cy < my + m->height) target = monitors[i];
+        }
+
+        const GLFWvidmode* mode = glfwGetVideoMode(target);
+        glfwSetWindowMonitor(m_window, target, 0, 0, mode->width, mode->height, mode->refreshRate);
+        m_fullscreen = true;
+    } else {
+        glfwSetWindowMonitor(m_window, nullptr, m_windowedX, m_windowedY, m_windowedW, m_windowedH, 0);
+        m_fullscreen = false;
+    }
+    glfwSwapInterval(1); // niektoré ovládače pri prepnutí VSync zrušia
+}
+
 void Window::onResize(GLFWwindow* window, int width, int height)
 {
     auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));

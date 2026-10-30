@@ -37,6 +37,8 @@ Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a 
 | Ctrl | šprint |
 | F | zapnúť / vypnúť lietanie |
 | F1 | wireframe |
+| F3 | ladiace informácie (FPS, pozícia, biom, chunky, GPU…) |
+| F11 | celá obrazovka |
 | + / - | väčší / menší dohľad (chunky) |
 | N | nový svet s náhodným seedom |
 | T | náhľad noci (vyskúšaj lampáše a svietiaci aetherit) |

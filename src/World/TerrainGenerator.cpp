@@ -464,7 +464,8 @@ void TerrainGenerator::generate(Chunk& chunk) const
                                   std::abs(h - col(x, z - 1).height), std::abs(h - col(x, z + 1).height)});
 
             // --- Tvar a materiály, zhora nadol. depth = koľko blokov sme pod najbližším vzduchom.
-            int top = h + 16;
+            // Aspoň po hladinu mora – inak by v hlbokom oceáne (dno < 46) chýbala horná vrstva vody.
+            int top = std::max(h + 16, SEA_LEVEL);
             if (c.islandShape > 0.0f) top = std::max(top, c.islandCenter + 12);
             top = std::min(top, Chunk::SIZE_Y - 1);
 

@@ -27,12 +27,18 @@ public:
     void setCursorLocked(bool locked);
     bool isCursorLocked() const { return m_cursorLocked; }
 
+    // Celá obrazovka na monitore, kde je okno; späť do okna na pôvodnom mieste.
+    void toggleFullscreen();
+    bool isFullscreen() const { return m_fullscreen; }
+
 private:
     static void onResize(GLFWwindow* window, int width, int height);
 
     GLFWwindow* m_window = nullptr;
     int m_width, m_height;
     bool m_cursorLocked = false;
+    bool m_fullscreen = false;
+    int m_windowedX = 100, m_windowedY = 100, m_windowedW = 1280, m_windowedH = 720;
 };
 
 } // namespace cubiq

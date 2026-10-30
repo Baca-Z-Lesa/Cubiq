@@ -27,6 +27,11 @@ public:
     // Ľubovoľný štvoruholník (body v smere hodinových ručičiek od ľavého horného).
     void quad(const glm::vec2 p[4], const glm::vec2 uv[4], const glm::vec4& color, bool textured);
 
+    // Text (ASCII, \n = nový riadok) pixelovým písmom 5×7; scale = veľkosť pixelu písma.
+    void text(const char* str, float x, float y, float scale, const glm::vec4& color);
+    static float textWidth(const char* str, float scale);
+    static float lineHeight(float scale) { return 9.0f * scale; }
+
     // Číslo z pixelového písma 3×5. Vráti šírku v pixeloch.
     float number(int value, float x, float y, float pixel, const glm::vec4& color);
     static float numberWidth(int value, float pixel);

@@ -68,6 +68,7 @@ add_executable(Cubiq
     src/Game/Inventory.cpp
     src/Game/Hud.cpp
     src/Game/Player.cpp
+    src/Game/DebugOverlay.cpp
 )
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 
