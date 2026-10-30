@@ -17,6 +17,7 @@ build\Debug\Cubiq.exe
 ```
 
 Konkrétny svet: `Cubiq.exe 1337` (seed ako argument, bez neho náhodný).
+Konkrétne miesto: `Cubiq.exe 7 192 96` (seed, x, z) – napr. lietajúce ostrovy v seede 7.
 
 Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× rýchlejší než v Debug.
 

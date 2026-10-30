@@ -11,6 +11,7 @@ public:
     explicit SimplexNoise(uint32_t seed);
 
     float noise(float x, float y) const; // približne -1..1
+    float noise(float x, float y, float z) const; // 3D, približne -1..1
 
     // Fractal Brownian motion: súčet oktáv, výsledok normalizovaný do -1..1.
     float fbm(float x, float y, int octaves, float lacunarity = 2.0f, float gain = 0.5f) const;

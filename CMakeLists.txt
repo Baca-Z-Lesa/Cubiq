@@ -50,6 +50,7 @@ add_library(CubiqWorld STATIC
     src/World/Noise.cpp
     src/World/Raycast.cpp
     src/World/Physics.cpp
+    src/World/Features.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 

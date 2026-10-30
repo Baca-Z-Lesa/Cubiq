@@ -75,10 +75,11 @@ struct GameWorld {
     }
 };
 
-static void spawnPlayer(Player& player, Camera& camera, const TerrainGenerator& generator)
+static void spawnPlayer(Player& player, Camera& camera, const TerrainGenerator& generator,
+                        const glm::ivec2* at = nullptr)
 {
-    glm::ivec2 spawn = generator.findSpawn();
-    int ground = std::max(generator.heightAt(spawn.x, spawn.y), TerrainGenerator::SEA_LEVEL);
+    glm::ivec2 spawn = at ? *at : generator.findSpawn();
+    int ground = std::max(generator.surfaceAt(spawn.x, spawn.y).y, TerrainGenerator::SEA_LEVEL);
     player.teleport(glm::vec3(spawn.x + 0.5f, ground + 1.0f, spawn.y + 0.5f));
     player.flying = false;
     camera.position = player.eyePosition();
@@ -104,7 +105,7 @@ struct BlockInteraction {
         bool placeNow = Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT) ||
                         (Input::isMouseDown(GLFW_MOUSE_BUTTON_RIGHT) && placeCooldown <= 0.0f);
 
-        if (breakNow && hit.hit) {
+        if (breakNow && hit.hit && blockType(hit.id).breakable) {
             world.setBlock(hit.block.x, hit.block.y, hit.block.z, BlockId::Air);
             inventory.add(hit.id, 1);
             breakCooldown = REPEAT;
@@ -127,12 +128,12 @@ struct BlockInteraction {
 
 static void giveStarterItems(Inventory& inventory)
 {
-    const BlockId starter[] = {BlockId::Grass, BlockId::Dirt, BlockId::Stone, BlockId::Sand,
-                               BlockId::Gravel, BlockId::Snow, BlockId::SnowyGrass};
+    const BlockId starter[] = {BlockId::Grass, BlockId::Dirt, BlockId::Stone, BlockId::OakLog, BlockId::OakLeaves,
+                               BlockId::CherryLeaves, BlockId::Sand, BlockId::Terracotta, BlockId::AetheriteOre};
     for (BlockId id : starter) inventory.add(id, Inventory::MAX_STACK);
 }
 
-static int run(uint32_t seed)
+static int run(uint32_t seed, const glm::ivec2* startAt)
 {
     Window window(1280, 720, "Cubiq");
     window.setCursorLocked(true);
@@ -144,7 +145,7 @@ static int run(uint32_t seed)
 
     Camera camera;
     Player player;
-    spawnPlayer(player, camera, game->generator);
+    spawnPlayer(player, camera, game->generator, startAt);
 
     UIRenderer ui;
     Hud hud;
@@ -233,6 +234,9 @@ static int run(uint32_t seed)
             mouseLook(camera);
 
         if (worldReadyAt(game->world, player.position)) {
+            // Ak hráč uviazol v bloku (spawn pod previsom, strom...), vytlač ho nahor.
+            for (int i = 0; i < 64 && collidesWithWorld(game->world, player.bounds()); ++i)
+                player.position.y += 1.0f;
             glm::vec3 flatForward = glm::normalize(glm::vec3(camera.forward().x, 0.0f, camera.forward().z));
             player.update(game->world, readControls(playing), flatForward, camera.right(), dt);
         }
@@ -334,12 +338,16 @@ static int run(uint32_t seed)
     return 0;
 }
 
-// Cubiq.exe [seed] – bez argumentu náhodný svet.
+// Cubiq.exe [seed] [x z] – bez argumentu náhodný svet; x z = miesto spawnu.
 int main(int argc, char** argv)
 {
     try {
         uint32_t seed = argc > 1 ? (uint32_t)std::strtoul(argv[1], nullptr, 10) : randomSeed();
-        return run(seed);
+        glm::ivec2 start;
+        bool hasStart = argc > 3;
+        if (hasStart) start = {std::atoi(argv[2]), std::atoi(argv[3])};
+
+        return run(seed, hasStart ? &start : nullptr);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "Chyba: %s\n", e.what());
 #ifdef _WIN32

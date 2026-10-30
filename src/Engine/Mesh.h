@@ -9,7 +9,8 @@ namespace cubiq {
 struct Vertex {
     glm::vec3 position;
     glm::vec2 uv;
-    float shade; // jednoduché tieňovanie podľa strany kocky
+    float shade;     // tieňovanie podľa strany kocky × ambient occlusion
+    glm::vec3 tint;  // farba biómu pre tónované pixely (tráva, listy)
 };
 
 // Vertexy + indexy na GPU (VAO/VBO/EBO).

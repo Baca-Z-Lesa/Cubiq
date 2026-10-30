@@ -1,5 +1,6 @@
 #pragma once
 #include "World/Chunk.h"
+#include "World/ChunkMesher.h"
 
 #include <glm/vec3.hpp>
 #include <condition_variable>
@@ -17,8 +18,8 @@ class World;
 class TerrainGenerator;
 
 // Načítava chunky okolo hráča a uvoľňuje vzdialené.
-// Generovanie beží vo vláknach na pozadí, meshing na hlavnom vlákne (kvôli OpenGL)
-// s časovým limitom na snímku, aby sa hra nesekala.
+// Generovanie aj stavba meshov bežia vo vláknach na pozadí; hlavné vlákno len
+// pripraví kópiu dát (snapshot) a hotový mesh nahrá na GPU (OpenGL ide len z hlavného vlákna).
 class ChunkManager {
 public:
     ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles);
@@ -37,11 +38,19 @@ public:
     // Štatistika meshingu (pre debug v titulku).
     int meshedTotal() const { return m_meshedTotal; }
     double meshMsAverage() const { return m_meshedTotal ? m_meshMsTotal / m_meshedTotal : 0.0; }
+
 private:
+    struct MeshResult {
+        glm::ivec2 coord;
+        ChunkMeshData data;
+        double ms;
+    };
+
     void requestMissing(glm::ivec2 center);
     void integrateFinished();
     void unloadFar(glm::ivec2 center);
-    void buildMeshes(glm::ivec2 center);
+    void scheduleMeshes(glm::ivec2 center);
+    void uploadMeshes();
     void workerLoop();
 
     World& m_world;
@@ -52,13 +61,21 @@ private:
     bool m_forceRequest = true;
     int m_meshedTotal = 0;
     double m_meshMsTotal = 0.0;
+
     std::vector<std::thread> m_workers;
     std::mutex m_mutex;
     std::condition_variable m_cv;
-    std::deque<glm::ivec2> m_queue;                  // čaká na vlákno
+    bool m_stop = false;
+
+    // generovanie
+    std::deque<glm::ivec2> m_genQueue;               // čaká na vlákno
     std::unordered_set<int64_t> m_pending;           // vo fronte alebo sa práve generuje
     std::vector<std::unique_ptr<Chunk>> m_finished;  // vygenerované, čaká na vloženie do sveta
-    bool m_stop = false;
+
+    // meshing (má prednosť pred generovaním – úpravy sveta sa prejavia hneď)
+    std::deque<std::unique_ptr<MeshInput>> m_meshQueue;
+    std::vector<MeshResult> m_meshResults;
+    int m_meshInFlight = 0;
 };
 
 } // namespace cubiq

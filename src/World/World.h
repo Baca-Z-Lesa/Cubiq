@@ -19,7 +19,7 @@ public:
     void removeChunk(glm::ivec2 coord);
     size_t chunkCount() const { return m_chunks.size(); }
 
-    // Má chunk všetkých 4 susedov? (až potom sa dá postaviť mesh bez falošných stien na okraji)
+    // Má chunk všetkých 8 susedov? (až potom sa dá postaviť mesh bez falošných stien a tieňov na okraji)
     bool hasAllNeighbors(glm::ivec2 coord) const;
 
     template <typename F>

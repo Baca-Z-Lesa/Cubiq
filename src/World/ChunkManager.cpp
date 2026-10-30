@@ -1,5 +1,4 @@
 #include "World/ChunkManager.h"
-#include "World/ChunkMesher.h"
 #include "World/TerrainGenerator.h"
 #include "World/World.h"
 
@@ -15,8 +14,6 @@ namespace {
         glm::ivec2 d = a - b;
         return d.x * d.x + d.y * d.y;
     }
-
-    constexpr double MESH_BUDGET_MS = 4.0; // koľko času na snímku smie zabrať meshing
 }
 
 ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles)
@@ -55,13 +52,14 @@ void ChunkManager::update(const glm::vec3& playerPos)
     glm::ivec2 center = World::chunkCoordOf((int)std::floor(playerPos.x), (int)std::floor(playerPos.z));
 
     integrateFinished();
+    uploadMeshes();
     if (center != m_lastCenter || m_forceRequest) {
         m_lastCenter = center;
         m_forceRequest = false;
         unloadFar(center);
         requestMissing(center);
     }
-    buildMeshes(center);
+    scheduleMeshes(center);
 }
 
 void ChunkManager::requestMissing(glm::ivec2 center)
@@ -81,14 +79,14 @@ void ChunkManager::requestMissing(glm::ivec2 center)
     {
         std::lock_guard lock(m_mutex);
         // Starý front zahodíme (hráč sa pohol), rozrobené chunky ostávajú v m_pending.
-        for (glm::ivec2 c : m_queue) m_pending.erase(World::key(c));
-        m_queue.clear();
+        for (glm::ivec2 c : m_genQueue) m_pending.erase(World::key(c));
+        m_genQueue.clear();
 
         for (glm::ivec2 c : wanted) {
             int64_t k = World::key(c);
             if (m_world.getChunk(c) || m_pending.count(k)) continue;
             m_pending.insert(k);
-            m_queue.push_back(c);
+            m_genQueue.push_back(c);
         }
     }
     m_cv.notify_all();
@@ -116,49 +114,88 @@ void ChunkManager::unloadFar(glm::ivec2 center)
     for (glm::ivec2 c : far) m_world.removeChunk(c);
 }
 
-void ChunkManager::buildMeshes(glm::ivec2 center)
+void ChunkManager::scheduleMeshes(glm::ivec2 center)
 {
+    // Držíme frontu krátku, aby sa zmeny (kopanie, stavanie) nepostavili za stovky čakajúcich chunkov.
+    const int maxInFlight = (int)m_workers.size() * 2;
+    if (m_meshInFlight >= maxInFlight) return;
+
     const int r = m_renderDistance;
     std::vector<Chunk*> todo;
     m_world.forEachChunk([&](Chunk& c) {
-        if (c.dirty && distSq(c.coord(), center) <= r * r && m_world.hasAllNeighbors(c.coord()))
+        if (c.dirty && !c.meshing && distSq(c.coord(), center) <= r * r && m_world.hasAllNeighbors(c.coord()))
             todo.push_back(&c);
     });
     std::sort(todo.begin(), todo.end(), [&](Chunk* a, Chunk* b) {
         return distSq(a->coord(), center) < distSq(b->coord(), center);
     });
 
-    // Do limitu rátame len CPU meshing. Prvé OpenGL volanie po swapBuffers často čaká
-    // na VSync (~16 ms), takže čas nahrávania na GPU by limit hneď vyčerpal.
-    double cpuMs = 0.0;
+    std::vector<std::unique_ptr<MeshInput>> jobs;
     for (Chunk* c : todo) {
-        auto t0 = std::chrono::steady_clock::now();
-        ChunkMeshData data = buildChunkMesh(m_world, *c, m_atlasTiles);
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        c->mesh = std::make_unique<Mesh>(data.opaque.vertices, data.opaque.indices);
-        c->liquidMesh = std::make_unique<Mesh>(data.liquid.vertices, data.liquid.indices);
+        if (m_meshInFlight + (int)jobs.size() >= maxInFlight) break;
+        jobs.push_back(std::make_unique<MeshInput>(snapshotChunk(m_world, *c)));
         c->dirty = false;
-        cpuMs += ms;
-        m_meshMsTotal += ms;
+        c->meshing = true;
+    }
+    if (jobs.empty()) return;
+
+    {
+        std::lock_guard lock(m_mutex);
+        for (auto& j : jobs) m_meshQueue.push_back(std::move(j));
+    }
+    m_meshInFlight += (int)jobs.size();
+    m_cv.notify_all();
+}
+
+void ChunkManager::uploadMeshes()
+{
+    std::vector<MeshResult> results;
+    {
+        std::lock_guard lock(m_mutex);
+        results.swap(m_meshResults);
+    }
+    for (MeshResult& r : results) {
+        --m_meshInFlight;
+        m_meshMsTotal += r.ms;
         ++m_meshedTotal;
-        if (cpuMs > MESH_BUDGET_MS) break;
+        // Chunk mohol byť medzitým uvoľnený – potom výsledok zahodíme.
+        Chunk* c = m_world.getChunk(r.coord);
+        if (!c) continue;
+        c->mesh = std::make_unique<Mesh>(r.data.opaque.vertices, r.data.opaque.indices);
+        c->liquidMesh = std::make_unique<Mesh>(r.data.liquid.vertices, r.data.liquid.indices);
+        c->meshing = false;
     }
 }
 
 void ChunkManager::workerLoop()
 {
     for (;;) {
-        glm::ivec2 coord;
+        std::unique_ptr<MeshInput> meshJob;
+        glm::ivec2 genCoord;
         {
             std::unique_lock lock(m_mutex);
-            m_cv.wait(lock, [&] { return m_stop || !m_queue.empty(); });
+            m_cv.wait(lock, [&] { return m_stop || !m_meshQueue.empty() || !m_genQueue.empty(); });
             if (m_stop) return;
-            coord = m_queue.front();
-            m_queue.pop_front();
+            if (!m_meshQueue.empty()) {
+                meshJob = std::move(m_meshQueue.front());
+                m_meshQueue.pop_front();
+            } else {
+                genCoord = m_genQueue.front();
+                m_genQueue.pop_front();
+            }
+        }
+
+        if (meshJob) {
+            auto t0 = std::chrono::steady_clock::now();
+            ChunkMeshData data = buildChunkMesh(*meshJob, m_atlasTiles);
+            double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::lock_guard lock(m_mutex);
+            m_meshResults.push_back({meshJob->coord, std::move(data), ms});
+            continue;
         }
 
         // Chunk ešte nie je vo svete, takže ho vlákno vlastní len ono – netreba zámok.
-        auto chunk = std::make_unique<Chunk>(coord);
+        auto chunk = std::make_unique<Chunk>(genCoord);
         m_generator.generate(*chunk);
 
         std::lock_guard lock(m_mutex);

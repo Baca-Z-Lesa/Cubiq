@@ -35,8 +35,10 @@ void World::removeChunk(glm::ivec2 coord) { m_chunks.erase(key(coord)); }
 
 bool World::hasAllNeighbors(glm::ivec2 coord) const
 {
-    return getChunk(coord + glm::ivec2(1, 0)) && getChunk(coord + glm::ivec2(-1, 0)) &&
-           getChunk(coord + glm::ivec2(0, 1)) && getChunk(coord + glm::ivec2(0, -1));
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx)
+            if ((dx || dz) && !getChunk(coord + glm::ivec2(dx, dz))) return false;
+    return true;
 }
 
 BlockId World::getBlock(int x, int y, int z) const
@@ -57,14 +59,15 @@ void World::setBlock(int x, int y, int z, BlockId id)
     int lx = floorMod(x, Chunk::SIZE_X), lz = floorMod(z, Chunk::SIZE_Z);
     chunk->set(lx, y, lz, id);
 
-    // Blok na okraji mení aj viditeľné steny suseda.
+    // Blok na okraji mení aj viditeľné steny a tiene (AO) suseda – v rohu aj diagonálneho.
     auto markDirty = [&](int dx, int dz) {
         if (Chunk* n = getChunk(cc + glm::ivec2(dx, dz))) n->dirty = true;
     };
-    if (lx == 0) markDirty(-1, 0);
-    if (lx == Chunk::SIZE_X - 1) markDirty(1, 0);
-    if (lz == 0) markDirty(0, -1);
-    if (lz == Chunk::SIZE_Z - 1) markDirty(0, 1);
+    int ex = lx == 0 ? -1 : lx == Chunk::SIZE_X - 1 ? 1 : 0;
+    int ez = lz == 0 ? -1 : lz == Chunk::SIZE_Z - 1 ? 1 : 0;
+    if (ex) markDirty(ex, 0);
+    if (ez) markDirty(0, ez);
+    if (ex && ez) markDirty(ex, ez);
 }
 
 } // namespace cubiq
