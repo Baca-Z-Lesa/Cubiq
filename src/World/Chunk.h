@@ -33,7 +33,8 @@ public:
     glm::ivec2 coord() const { return m_coord; }
     int maxY() const { return m_maxY; } // najvyšší neprázdny blok (mesher nad ním nič nehľadá)
 
-    std::unique_ptr<Mesh> mesh;
+    std::unique_ptr<Mesh> mesh;       // nepriehľadné bloky
+    std::unique_ptr<Mesh> liquidMesh; // voda (kreslí sa až po teréne)
     bool dirty = true; // mesh treba prestavať
 
 private:

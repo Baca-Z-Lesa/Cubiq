@@ -19,8 +19,8 @@ namespace {
     constexpr double MESH_BUDGET_MS = 4.0; // koľko času na snímku smie zabrať meshing
 }
 
-ChunkManager::ChunkManager(World& world, int renderDistance, int atlasTiles)
-    : m_world(world), m_renderDistance(renderDistance), m_atlasTiles(atlasTiles)
+ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles)
+    : m_world(world), m_generator(generator), m_renderDistance(renderDistance), m_atlasTiles(atlasTiles)
 {
     // Jedno vlákno nechávame hlavnej slučke.
     unsigned threads = std::max(1u, std::thread::hardware_concurrency() - 1);
@@ -133,15 +133,13 @@ void ChunkManager::buildMeshes(glm::ivec2 center)
     double cpuMs = 0.0;
     for (Chunk* c : todo) {
         auto t0 = std::chrono::steady_clock::now();
-        MeshData data = buildChunkMesh(m_world, *c, m_atlasTiles);
-        auto tCpu = std::chrono::steady_clock::now();
-        c->mesh = std::make_unique<Mesh>(data.vertices, data.indices);
+        ChunkMeshData data = buildChunkMesh(m_world, *c, m_atlasTiles);
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        c->mesh = std::make_unique<Mesh>(data.opaque.vertices, data.opaque.indices);
+        c->liquidMesh = std::make_unique<Mesh>(data.liquid.vertices, data.liquid.indices);
         c->dirty = false;
-        auto t1 = std::chrono::steady_clock::now();
-        double ms = std::chrono::duration<double, std::milli>(tCpu - t0).count();
         cpuMs += ms;
         m_meshMsTotal += ms;
-        m_uploadMsTotal += std::chrono::duration<double, std::milli>(t1 - tCpu).count();
         ++m_meshedTotal;
         if (cpuMs > MESH_BUDGET_MS) break;
     }
@@ -161,7 +159,7 @@ void ChunkManager::workerLoop()
 
         // Chunk ešte nie je vo svete, takže ho vlákno vlastní len ono – netreba zámok.
         auto chunk = std::make_unique<Chunk>(coord);
-        generateTerrain(*chunk);
+        m_generator.generate(*chunk);
 
         std::lock_guard lock(m_mutex);
         m_finished.push_back(std::move(chunk));

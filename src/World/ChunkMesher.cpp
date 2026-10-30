@@ -23,11 +23,9 @@ namespace {
     };
 }
 
-MeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles)
+ChunkMeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles)
 {
-    MeshData data;
-    auto& vertices = data.vertices;
-    auto& indices = data.indices;
+    ChunkMeshData data;
 
     const int baseX = chunk.coord().x * Chunk::SIZE_X;
     const int baseZ = chunk.coord().y * Chunk::SIZE_Z;
@@ -44,24 +42,40 @@ MeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles)
                 BlockId id = chunk.get(x, y, z);
                 if (id == BlockId::Air) continue;
                 const BlockType& type = blockType(id);
+                const bool liquid = type.liquid;
+                MeshData& out = liquid ? data.liquid : data.opaque;
+
+                // Hladina je o kúsok nižšie ako plný blok (len keď nad vodou nie je ďalšia voda).
+                const bool surface = liquid && neighbor(x, y + 1, z) != id;
+                const float topHeight = surface ? 0.875f : 1.0f;
 
                 for (const FaceDef& face : FACES) {
-                    if (isSolid(neighbor(x + face.normal.x, y + face.normal.y, z + face.normal.z)))
+                    int ny = y + face.normal.y;
+                    if (ny < 0) continue; // spodok sveta nikto nevidí
+
+                    BlockId n = neighbor(x + face.normal.x, ny, z + face.normal.z);
+                    // Pevný blok: stena je vidno cez vzduch aj vodu.
+                    // Voda: stena len do vzduchu (medzi dvoma vodnými blokmi nič).
+                    if (isOpaque(n) || (liquid && n == id))
                         continue;
 
                     int tile = face.kind == FaceKind::Top    ? type.tileTop
                              : face.kind == FaceKind::Bottom ? type.tileBottom
                                                              : type.tileSide;
-                    float u0 = (float)tile / atlasTiles;
-                    float u1 = (float)(tile + 1) / atlasTiles;
+                    // Polovica texelu dovnútra, aby na hranách nepresakovala susedná dlaždica atlasu.
+                    const float inset = 0.5f / (16.0f * atlasTiles);
+                    float u0 = (float)tile / atlasTiles + inset;
+                    float u1 = (float)(tile + 1) / atlasTiles - inset;
                     glm::vec3 p((float)x, (float)y, (float)z);
 
-                    uint32_t base = (uint32_t)vertices.size();
-                    vertices.push_back({p + face.corners[0], {u0, 1.0f}, face.shade});
-                    vertices.push_back({p + face.corners[1], {u1, 1.0f}, face.shade});
-                    vertices.push_back({p + face.corners[2], {u1, 0.0f}, face.shade});
-                    vertices.push_back({p + face.corners[3], {u0, 0.0f}, face.shade});
-                    indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+                    uint32_t base = (uint32_t)out.vertices.size();
+                    for (int c = 0; c < 4; ++c) {
+                        glm::vec3 corner = face.corners[c];
+                        if (corner.y > 0.5f) corner.y = topHeight;
+                        glm::vec2 uv(c == 0 || c == 3 ? u0 : u1, c < 2 ? 1.0f - inset * atlasTiles : inset * atlasTiles);
+                        out.vertices.push_back({p + corner, uv, face.shade});
+                    }
+                    out.indices.insert(out.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
                 }
             }
         }

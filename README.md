@@ -16,6 +16,8 @@ cmake --build build --config Debug
 build\Debug\Cubiq.exe
 ```
 
+Konkrétny svet: `Cubiq.exe 1337` (seed ako argument, bez neho náhodný).
+
 Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× rýchlejší než v Debug.
 
 ## Ovládanie
@@ -28,6 +30,7 @@ Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× r
 | Ctrl | rýchlejší let |
 | F1 | wireframe |
 | + / - | väčší / menší dohľad (chunky) |
+| N | nový svet s náhodným seedom |
 | Esc | uvoľniť myš (2× = koniec) |
 | Ľavý klik | znova zamknúť myš |
 

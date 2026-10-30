@@ -14,13 +14,14 @@
 namespace cubiq {
 
 class World;
+class TerrainGenerator;
 
 // Načítava chunky okolo hráča a uvoľňuje vzdialené.
 // Generovanie beží vo vláknach na pozadí, meshing na hlavnom vlákne (kvôli OpenGL)
 // s časovým limitom na snímku, aby sa hra nesekala.
 class ChunkManager {
 public:
-    ChunkManager(World& world, int renderDistance, int atlasTiles);
+    ChunkManager(World& world, const TerrainGenerator& generator, int renderDistance, int atlasTiles);
     ~ChunkManager();
 
     ChunkManager(const ChunkManager&) = delete;
@@ -36,8 +37,6 @@ public:
     // Štatistika meshingu (pre debug v titulku).
     int meshedTotal() const { return m_meshedTotal; }
     double meshMsAverage() const { return m_meshedTotal ? m_meshMsTotal / m_meshedTotal : 0.0; }
-    double uploadMsAverage() const { return m_meshedTotal ? m_uploadMsTotal / m_meshedTotal : 0.0; }
-
 private:
     void requestMissing(glm::ivec2 center);
     void integrateFinished();
@@ -46,14 +45,13 @@ private:
     void workerLoop();
 
     World& m_world;
+    const TerrainGenerator& m_generator;
     int m_renderDistance;
     int m_atlasTiles;
     glm::ivec2 m_lastCenter{INT32_MAX, INT32_MAX};
     bool m_forceRequest = true;
     int m_meshedTotal = 0;
     double m_meshMsTotal = 0.0;
-    double m_uploadMsTotal = 0.0;
-
     std::vector<std::thread> m_workers;
     std::mutex m_mutex;
     std::condition_variable m_cv;

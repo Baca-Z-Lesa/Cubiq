@@ -14,8 +14,15 @@ struct MeshData {
     std::vector<uint32_t> indices;
 };
 
+// Nepriehľadné bloky a priesvitné tekutiny idú do samostatných meshov,
+// lebo voda sa kreslí až po celom teréne s blendingom.
+struct ChunkMeshData {
+    MeshData opaque;
+    MeshData liquid;
+};
+
 // Postaví geometriu pre celý chunk (len CPU, bez OpenGL). Stenu bloku pridá len vtedy,
-// keď je za ňou nepevný blok (vzduch) – vnútorné steny sa vôbec nekreslia.
-MeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles);
+// keď ju nič nezakrýva – vnútorné steny sa vôbec nekreslia.
+ChunkMeshData buildChunkMesh(const World& world, const Chunk& chunk, int atlasTiles);
 
 } // namespace cubiq
