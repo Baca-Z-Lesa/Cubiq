@@ -4,7 +4,12 @@ cmake_minimum_required(VERSION 3.20)
 # (Debug je pri generovaní sveta 10–50× pomalší), ale stále sa v nej dá ladiť.
 set(CMAKE_CONFIGURATION_TYPES "RelWithDebInfo;Debug;Release" CACHE STRING "" FORCE)
 
-project(Cubiq LANGUAGES CXX C)
+project(Cubiq VERSION 0.11.0 LANGUAGES CXX C)
+
+# Statický C++ runtime (/MT): hotové Cubiq.exe beží aj na PC bez Visual C++ Redistributable.
+# Policy default platí aj pre závislosti so starým cmake_minimum_required (glew).
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,6 +79,12 @@ add_executable(Cubiq
     src/Game/SaveGame.cpp
     src/Game/Gui.cpp
 )
+if(WIN32)
+    # Ikona aplikácie a údaje o verzii v .exe; bez konzolového okna v Release.
+    target_sources(Cubiq PRIVATE installer/Cubiq.rc)
+    set_target_properties(Cubiq PROPERTIES WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>)
+    target_link_options(Cubiq PRIVATE $<$<NOT:$<CONFIG:Debug>>:/ENTRY:mainCRTStartup>)
+endif()
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 
 # assets/ sa skopíruje vedľa .exe pri každom builde

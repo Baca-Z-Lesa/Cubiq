@@ -1,0 +1,25 @@
+// Ikona a údaje o verzii pre Cubiq.exe
+IDI_ICON1 ICON "Cubiq.ico"
+
+1 VERSIONINFO
+FILEVERSION 0,11,0,0
+PRODUCTVERSION 0,11,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041B04B0"
+        BEGIN
+            VALUE "FileDescription", "Cubiq - voxelovy svet"
+            VALUE "ProductName", "Cubiq"
+            VALUE "FileVersion", "0.11.0"
+            VALUE "ProductVersion", "0.11.0"
+            VALUE "OriginalFilename", "Cubiq.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x041B, 1200
+    END
+END

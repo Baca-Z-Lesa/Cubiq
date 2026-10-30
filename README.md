@@ -25,6 +25,17 @@ Rýchla hra bez ukladania: `Cubiq.exe 1337` (seed) alebo `Cubiq.exe 7 192 96` (s
 Predvolená konfigurácia je **RelWithDebInfo** – optimalizovaná (60 FPS), a pritom sa v nej dá ladiť.
 **Debug** je pri načítavaní sveta výrazne pomalší (~20 FPS), používaj ho len keď ladíš konkrétnu chybu.
 
+## Installer
+
+```
+powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
+```
+
+Zostaví Release a vytvorí `dist\Cubiq-<verzia>-setup.exe` (potrebný [Inno Setup 6](https://jrsoftware.org/isinfo.php)).
+Installer nepotrebuje administrátora, vytvorí odkaz v Štart menu (voliteľne na ploche) a dá sa odinštalovať
+cez Nastavenia → Aplikácie. Hra je zostavená so statickým C++ runtime, takže beží aj na PC bez Visual Studia.
+Uložené svety v `%APPDATA%\Cubiq` ostávajú aj po odinštalovaní.
+
 ## Ovládanie
 
 | Kláves | Akcia |
