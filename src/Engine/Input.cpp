@@ -12,6 +12,9 @@ namespace {
     glm::vec2 g_lastMouse{0.0f};
     glm::vec2 g_mouseDelta{0.0f};
     bool g_firstMouse = true;
+    float g_scroll = 0.0f;
+
+    void scrollCallback(GLFWwindow*, double, double y) { g_scroll += (float)y; }
 
     void keyCallback(GLFWwindow*, int key, int, int action, int)
     {
@@ -43,6 +46,7 @@ void Input::attach(GLFWwindow* window)
     glfwSetKeyCallback(window, keyCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorCallback);
+    glfwSetScrollCallback(window, scrollCallback);
 }
 
 void Input::beginFrame()
@@ -50,6 +54,7 @@ void Input::beginFrame()
     g_keyPressed.fill(false);
     g_mousePressed.fill(false);
     g_mouseDelta = glm::vec2(0.0f);
+    g_scroll = 0.0f;
 }
 
 void Input::resetMouseDelta()
@@ -63,5 +68,13 @@ bool Input::wasKeyPressed(int key) { return g_keyPressed[key]; }
 bool Input::isMouseDown(int button) { return glfwGetMouseButton(g_window, button) == GLFW_PRESS; }
 bool Input::wasMousePressed(int button) { return g_mousePressed[button]; }
 glm::vec2 Input::mouseDelta() { return g_mouseDelta; }
+float Input::scrollDelta() { return g_scroll; }
+
+glm::vec2 Input::mousePosition()
+{
+    double x, y;
+    glfwGetCursorPos(g_window, &x, &y);
+    return {(float)x, (float)y};
+}
 
 } // namespace cubiq

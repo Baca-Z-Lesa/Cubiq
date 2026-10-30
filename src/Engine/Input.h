@@ -17,6 +17,8 @@ public:
     static bool isMouseDown(int button);
     static bool wasMousePressed(int button);
     static glm::vec2 mouseDelta();
+    static glm::vec2 mousePosition();     // v pixeloch okna, (0,0) vľavo hore
+    static float scrollDelta();           // koliesko za túto snímku (+ hore)
 };
 
 } // namespace cubiq

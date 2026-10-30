@@ -34,6 +34,7 @@ add_library(CubiqEngine STATIC
     src/Engine/Texture.cpp
     src/Engine/Mesh.cpp
     src/Engine/Camera.cpp
+    src/Engine/UIRenderer.cpp
 )
 target_include_directories(CubiqEngine PUBLIC src)
 target_link_libraries(CubiqEngine PUBLIC glfw glm::glm libglew_static)
@@ -47,6 +48,7 @@ add_library(CubiqWorld STATIC
     src/World/TerrainGenerator.cpp
     src/World/ChunkManager.cpp
     src/World/Noise.cpp
+    src/World/Raycast.cpp
 )
 target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 
@@ -54,6 +56,9 @@ target_link_libraries(CubiqWorld PUBLIC CubiqEngine)
 add_executable(Cubiq
     src/Game/main.cpp
     src/Game/BlockAtlas.cpp
+    src/Game/BlockHighlight.cpp
+    src/Game/Inventory.cpp
+    src/Game/Hud.cpp
 )
 target_link_libraries(Cubiq PRIVATE CubiqWorld)
 

@@ -25,14 +25,17 @@ Na hranie použi **Release** (`--config Release`): meshing chunkov je tam ~6× r
 | Kláves | Akcia |
 |---|---|
 | Myš | rozhliadanie |
+| Ľavé tlačidlo | kopať (držaním opakovane) |
+| Pravé tlačidlo | postaviť blok z hotbaru |
+| 1–9 / koliesko | výber v hotbare |
+| E | inventár (klik = vziať / položiť / vymeniť stack) |
 | WASD | pohyb |
 | Space / Shift | hore / dole |
 | Ctrl | rýchlejší let |
 | F1 | wireframe |
 | + / - | väčší / menší dohľad (chunky) |
 | N | nový svet s náhodným seedom |
-| Esc | uvoľniť myš (2× = koniec) |
-| Ľavý klik | znova zamknúť myš |
+| Esc | zavrieť inventár / uvoľniť myš (2× = koniec) |
 
 ## Štruktúra
 
