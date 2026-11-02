@@ -81,18 +81,21 @@ int FarTerrain::stepFor(glm::ivec2 tile, glm::ivec2 center) const
 
 FarTerrain::TileData FarTerrain::buildTile(Request r) const
 {
+    // Krajina z "veľkých kociek": každá bunka step×step blokov je stĺpec s rovným vrchom
+    // a zvislými stenami tam, kde je sused nižšie – z diaľky vyzerá ako bloky, nie hladký terén.
     const int step = r.step;
-    const int N = TILE / step + 1; // vrcholy na stranu
+    const int N = TILE / step; // bunky na stranu
     const int baseX = r.coord.x * TILE, baseZ = r.coord.y * TILE;
     const int sea = TerrainGenerator::SEA_LEVEL;
 
-    // Výšky s okrajom 1 (kvôli normálam) a farby.
+    // Výšky (s okrajom 1 bunky – kvôli stenám na hranici dlaždice) a farby vrchov.
     std::vector<float> height((N + 2) * (N + 2));
     std::vector<glm::vec3> color(N * N);
     auto H = [&](int i, int j) -> float& { return height[(j + 1) * (N + 2) + (i + 1)]; };
     for (int j = -1; j <= N; ++j)
         for (int i = -1; i <= N; ++i) {
-            TerrainGenerator::Column c = m_generator.columnAt(baseX + i * step, baseZ + j * step);
+            // vzorka zo stredu bunky
+            TerrainGenerator::Column c = m_generator.columnAt(baseX + i * step + step / 2, baseZ + j * step + step / 2);
             H(i, j) = (float)std::max(c.height, sea) + 1.0f; // vrch bloku; voda = hladina
             if (i >= 0 && j >= 0 && i < N && j < N) color[j * N + i] = surfaceColor(c);
         }
@@ -102,19 +105,32 @@ FarTerrain::TileData FarTerrain::buildTile(Request r) const
     t.step = step;
     t.minY = 1e9f;
     t.maxY = -1e9f;
-    auto vertex = [&](int i, int j) {
-        float h = H(i, j);
-        t.minY = std::min(t.minY, h);
-        t.maxY = std::max(t.maxY, h);
-        glm::vec3 n = glm::normalize(glm::vec3(H(i - 1, j) - H(i + 1, j), 2.0f * step, H(i, j - 1) - H(i, j + 1)));
-        return Vertex{glm::vec3(baseX + i * step, h, baseZ + j * step), color[j * N + i], n};
+    t.vertices.reserve(N * N * 6 * 3);
+
+    auto quad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d, glm::vec3 col, glm::vec3 n) {
+        t.vertices.insert(t.vertices.end(), {{a, col, n}, {b, col, n}, {c, col, n}, {a, col, n}, {c, col, n}, {d, col, n}});
     };
 
-    t.vertices.reserve((N - 1) * (N - 1) * 6);
-    for (int j = 0; j < N - 1; ++j)
-        for (int i = 0; i < N - 1; ++i) {
-            Vertex a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1);
-            t.vertices.insert(t.vertices.end(), {a, d, c, a, c, b});
+    for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            const float h = H(i, j);
+            const float x0 = (float)(baseX + i * step), x1 = x0 + step;
+            const float z0 = (float)(baseZ + j * step), z1 = z0 + step;
+            const glm::vec3 top = color[j * N + i];
+            // Boky sú tmavšie (hlina / skala pod trávou), voda má boky rovnaké.
+            const glm::vec3 side = top.b > top.g && top.b > top.r ? top : top * 0.62f + glm::vec3(0.12f, 0.08f, 0.04f);
+            t.minY = std::min(t.minY, h);
+            t.maxY = std::max(t.maxY, h);
+
+            quad({x0, h, z0}, {x1, h, z0}, {x1, h, z1}, {x0, h, z1}, top, {0, 1, 0});
+
+            // Steny smerom k nižším susedom (až po ich výšku).
+            float hn;
+            if ((hn = H(i + 1, j)) < h) quad({x1, hn, z0}, {x1, h, z0}, {x1, h, z1}, {x1, hn, z1}, side, {1, 0, 0});
+            if ((hn = H(i - 1, j)) < h) quad({x0, hn, z1}, {x0, h, z1}, {x0, h, z0}, {x0, hn, z0}, side, {-1, 0, 0});
+            if ((hn = H(i, j + 1)) < h) quad({x1, hn, z1}, {x1, h, z1}, {x0, h, z1}, {x0, hn, z1}, side, {0, 0, 1});
+            if ((hn = H(i, j - 1)) < h) quad({x0, hn, z0}, {x0, h, z0}, {x1, h, z0}, {x1, hn, z0}, side, {0, 0, -1});
+            t.minY = std::min(t.minY, std::min({H(i + 1, j), H(i - 1, j), H(i, j + 1), H(i, j - 1)}));
         }
     return t;
 }

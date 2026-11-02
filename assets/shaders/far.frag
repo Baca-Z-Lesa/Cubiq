@@ -17,17 +17,18 @@ out vec4 FragColor;
 void main()
 {
     vec2 d = abs(vWorldPos.xz - uCameraPos.xz);
-    if (max(d.x, d.y) < uNearRadius)
+    float square = max(d.x, d.y); // vzdialenosť "v štvorci" – svet je hranatý ako v Minecrafte
+    if (square < uNearRadius)
         discard;
 
-    // Rovnaký charakter svetla ako bloky: zhora jasno, boky tmavšie, k tomu slnko.
+    // Rovnaké tieňovanie strán ako pri blokoch: vrch najsvetlejší, boky tmavšie.
     vec3 n = normalize(vNormal);
-    float sky = 0.55 + 0.45 * n.y;
+    float shade = n.y > 0.5 ? 1.0 : (abs(n.x) > 0.5 ? 0.6 : 0.8);
     float sun = max(dot(n, uSunDir), 0.0) * smoothstep(-0.05, 0.15, uSunDir.y);
-    vec3 light = uSunColor * uSunBrightness * (sky * 0.8 + sun * 0.3);
+    vec3 light = uSunColor * uSunBrightness * (shade * 0.85 + sun * 0.2);
     vec3 col = vColor * light;
 
-    float dist = length(vWorldPos - uCameraPos);
-    float fog = clamp((dist - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);
+    // Hmla podľa štvorcovej vzdialenosti → okraj sveta je hranatý, nie kruh.
+    float fog = clamp((square - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);
     FragColor = vec4(mix(col, uFogColor, fog), 1.0);
 }
