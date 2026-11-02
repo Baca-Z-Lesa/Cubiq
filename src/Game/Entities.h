@@ -65,7 +65,8 @@ public:
     // Lúč z oka: najbližšie zviera do maxDistance (na úder). -1 = nič.
     int raycast(const glm::vec3& origin, const glm::vec3& dir, float maxDistance, float& distance) const;
     // Úder: odhodí ho, zraní, a vyplaší (aj okolie).
-    void hit(int index, const glm::vec3& fromDir);
+    // Úder (damage životov); vráti true, ak zviera padlo.
+    bool hit(int index, const glm::vec3& fromDir, int damage = 1);
 
     const std::vector<Mob>& mobs() const { return m_mobs; }
 

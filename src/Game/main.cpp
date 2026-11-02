@@ -322,7 +322,11 @@ struct Session {
     Camera camera;
     Inventory inventory;
     ItemStack held;
-    bool inventoryOpen = false;
+    bool inventoryOpen = false; // je otvorené nejaké UI (container != None)
+    Container container = Container::None;
+    glm::ivec3 containerPos{0};  // stôl / oltár / pec, pri ktorej hráč stojí
+    CraftGrid grid;
+    Furnaces furnaces;
     BlockInteraction interaction;
     EntityManager entities; // zvieratá sa neukladajú, objavujú sa znova podľa biómu
     DroppedItems drops;     // predmety na zemi sa tiež neukladajú
@@ -335,9 +339,90 @@ struct Session {
 
     bool creative() const { return info.creative; }
 
+    void returnGrid() { cubiq::returnGrid(grid, inventory, drops, player.position + glm::vec3(0.0f, 1.0f, 0.0f)); }
+
+    UiState uiState() const
+    {
+        UiState u;
+        u.inventory = &inventory;
+        u.held = &held;
+        u.open = container;
+        u.creative = creative();
+        u.grid = &grid;
+        u.furnace = container == Container::Furnace ? furnaces.find(containerPos) : nullptr;
+        return u;
+    }
+
+    // Vloží stack do slotov [from, to) – najprv k rovnakým, potom do prázdnych. Vráti zvyšok.
+    int insertInto(ItemStack stack, int from, int to)
+    {
+        for (int pass = 0; pass < 2 && stack.count > 0; ++pass)
+            for (int i = from; i < to && stack.count > 0; ++i) {
+                ItemStack& d = inventory.slot(i);
+                if (pass == 0 && !d.empty() && d.id == stack.id && d.count < d.maxStack() && stack.maxStack() > 1) {
+                    int n = std::min(stack.count, d.maxStack() - d.count);
+                    d.count += n;
+                    stack.count -= n;
+                } else if (pass == 1 && d.empty()) {
+                    d = stack;
+                    stack.count = 0;
+                }
+            }
+        return stack.count;
+    }
+
+    // Shift+klik na slot inventára: do pece, alebo medzi hotbarom a batohom.
+    void quickMove(int index)
+    {
+        ItemStack& s = inventory.slot(index);
+        if (s.empty()) return;
+        if (container == Container::Furnace) {
+            Furnace& f = furnaces.at(containerPos);
+            ItemStack* target = smeltResult(s.id) != Item::Air ? &f.input : fuelTime(s.id) > 0.0f ? &f.fuel : nullptr;
+            if (target) {
+                if (target->empty()) { *target = s; s.clear(); }
+                else if (target->id == s.id) {
+                    int n = std::min(s.count, target->maxStack() - target->count);
+                    target->count += n;
+                    if ((s.count -= n) <= 0) s.clear();
+                }
+                return;
+            }
+        }
+        const bool fromHotbar = index < Inventory::HOTBAR;
+        int left = fromHotbar ? insertInto(s, Inventory::HOTBAR, Inventory::SIZE) : insertInto(s, 0, Inventory::HOTBAR);
+        if (left == 0) s.clear();
+        else s.count = left;
+    }
+
+    // Klik na výsledok craftingu (so Shiftom vyrobí čo najviac rovno do inventára).
+    void takeCraftResult(bool all)
+    {
+        for (int n = 0; n < 64; ++n) {
+            const Recipe* r = matchRecipe(grid);
+            if (!r) return;
+            const ItemStack result = r->result;
+            if (all) {
+                int left = inventory.add(result);
+                if (left > 0) {
+                    ItemStack rest = result;
+                    rest.count = left;
+                    drops.spawn(rest, player.position + glm::vec3(0.0f, 1.0f, 0.0f));
+                }
+            } else {
+                if (!held.empty() && (held.id != result.id || held.count + result.count > held.maxStack())) return;
+                if (held.empty()) held = result;
+                else held.count += result.count;
+            }
+            consumeGrid(grid);
+            if (!all) return;
+        }
+    }
+
     // Smrť: všetko z inventára vypadne na zem.
     void dropEverything()
     {
+        returnGrid();
         const glm::vec3 at = player.position + glm::vec3(0.0f, 1.0f, 0.0f);
         for (int i = 0; i < Inventory::SIZE; ++i) {
             drops.spawn(inventory.slot(i), at);
@@ -358,6 +443,8 @@ struct Session {
         info.time = worldTime;
         info.inventory = inventory;
         if (!held.empty()) info.inventory.add(held);
+        for (const ItemStack& c : grid.cells) info.inventory.add(c);
+        info.furnaces = furnaces.all();
         info.health = vitals.health;
         info.hunger = vitals.hunger;
         info.saturation = vitals.saturation;
@@ -388,6 +475,7 @@ static std::unique_ptr<Session> startSession(const WorldInfo& info, bool persist
         s->vitals.health = info.health;
         s->vitals.hunger = info.hunger;
         s->vitals.saturation = info.saturation;
+        s->furnaces.all() = info.furnaces;
         if (s->vitals.dead()) { // uložené počas smrti → začni znova na spawne
             s->vitals.reset();
             spawnPlayer(s->player, s->camera, s->game->generator);
@@ -476,20 +564,31 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
         screen = Screen::Title;
         window.setCursorLocked(false);
     };
-    auto setInventoryOpen = [&](bool open) {
+    // Otvorenie inventára / stola / oltára / pece (None = zavrieť).
+    auto openContainer = [&](Container c, glm::ivec3 pos) {
         Session& s = *session;
-        s.inventoryOpen = open;
-        if (!open && !s.held.empty()) { // čo ostalo v ruke, vráť späť
-            int left = s.inventory.add(s.held);
-            if (left > 0) { // nezmestí sa → vyhodiť pred hráča
-                ItemStack rest = s.held;
-                rest.count = left;
-                s.drops.spawn(rest, s.camera.position, s.camera.forward() * 4.0f);
+        if (s.container != Container::None) {
+            // Zatvorenie: mriežka a to, čo ostalo v ruke, sa vráti do inventára.
+            s.returnGrid();
+            if (!s.held.empty()) {
+                int left = s.inventory.add(s.held);
+                if (left > 0) { // nezmestí sa → vyhodiť pred hráča
+                    ItemStack rest = s.held;
+                    rest.count = left;
+                    s.drops.spawn(rest, s.camera.position, s.camera.forward() * 4.0f);
+                }
+                s.held.clear();
             }
-            s.held.clear();
         }
-        window.setCursorLocked(!open);
+        s.container = c;
+        s.inventoryOpen = c != Container::None;
+        s.containerPos = pos;
+        s.grid.size = (c == Container::Table || c == Container::Altar) ? 3 : 2;
+        s.grid.station = c == Container::Table ? Station::Table : c == Container::Altar ? Station::Altar : Station::Hand;
+        if (c == Container::Furnace) s.furnaces.at(pos);
+        window.setCursorLocked(!s.inventoryOpen);
     };
+    auto setInventoryOpen = [&](bool open) { openContainer(open ? Container::Inventory : Container::None, glm::ivec3(0)); };
 
     bool wireframe = false;
     bool showDebug = false;
@@ -588,9 +687,11 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                     s.player.update(g.world, controls, flatForward, s.camera.right(), dt);
 
                     if (!s.creative()) {
-                        s.vitals.update(g.world, s.player, dt);                        if (s.vitals.dead()) {
+                        s.vitals.update(g.world, s.player, dt);
+                        if (s.vitals.dead()) {
                             s.dropEverything();
                             s.inventoryOpen = false;
+                            s.container = Container::None;
                             screen = Screen::Dead;
                             window.setCursorLocked(false);
                         }
@@ -616,30 +717,95 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
             if (running) {
                 s.entities.update(g.world, g.generator, s.player.position, dt);
                 s.drops.update(g.world, s.inventory, s.player.position + glm::vec3(0.0f, 0.8f, 0.0f), dt);
+                s.furnaces.update(g.world, s.drops, dt);
+                // Stôl / pec zničená alebo hráč odišiel ďaleko → zavrieť.
+                if (s.container == Container::Table || s.container == Container::Altar || s.container == Container::Furnace) {
+                    const glm::ivec3 p = s.containerPos;
+                    const BlockId need = s.container == Container::Table ? BlockId::CraftingTable
+                                       : s.container == Container::Altar ? BlockId::RunicAltar : BlockId::Furnace;
+                    if (g.world.getBlock(p.x, p.y, p.z) != need ||
+                        glm::length(glm::vec3(p) + glm::vec3(0.5f) - s.player.position) > 8.0f)
+                        setInventoryOpen(false);
+                }
             }
 
             hit = raycast(g.world, s.camera.position, s.camera.forward(), BlockInteraction::REACH);
             if (screen == Screen::Game) {
                 if (s.inventoryOpen) {
                     const bool rightClick = Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT);
+                    const bool shift = Input::isKeyDown(GLFW_KEY_LEFT_SHIFT);
                     if (clicked || rightClick) {
-                        const glm::vec2 mouse = Input::mousePosition();
-                        int slot = hud.slotAt(window.width(), window.height(), mouse, s.creative());
-                        Item fromCatalog = s.creative() ? hud.catalogAt(window.width(), window.height(), mouse) : Item::Air;
-                        if (slot >= 0) {
-                            clickStack(s.inventory.slot(slot), s.held, rightClick);
-                        } else if (fromCatalog != Item::Air) {
+                        const UiState uiSt = s.uiState();
+                        const UiTarget t = hud.targetAt(window.width(), window.height(), Input::mousePosition(), uiSt);
+                        Furnace* furnace = s.container == Container::Furnace ? &s.furnaces.at(s.containerPos) : nullptr;
+                        switch (t.kind) {
+                        case UiTarget::Slot:
+                            if (shift && clicked) s.quickMove(t.index);
+                            else clickStack(s.inventory.slot(t.index), s.held, rightClick);
+                            break;
+                        case UiTarget::Catalog:
                             // Kreatívny katalóg: ľavé = plný stack, pravé = 1 kus; s predmetom v ruke ho zahodí.
-                            if (s.held.empty()) s.held = ItemStack::of(fromCatalog, rightClick ? 1 : itemInfo(fromCatalog).maxStack);
+                            if (s.held.empty()) s.held = ItemStack::of(t.item, rightClick ? 1 : itemInfo(t.item).maxStack);
                             else s.held.clear();
+                            break;
+                        case UiTarget::Craft:
+                            clickStack(s.grid.cells[t.index], s.held, rightClick);
+                            break;
+                        case UiTarget::Result:
+                            s.takeCraftResult(shift);
+                            break;
+                        case UiTarget::Book: {
+                            const std::vector<int> book = Hud::bookRecipes(s.grid);
+                            if (t.index < (int)book.size()) fillGrid(allRecipes()[book[t.index]], s.inventory, s.grid);
+                            break;
+                        }
+                        case UiTarget::FurnaceInput:
+                            if (furnace) clickStack(furnace->input, s.held, rightClick);
+                            break;
+                        case UiTarget::FurnaceFuel:
+                            if (furnace) clickStack(furnace->fuel, s.held, rightClick);
+                            break;
+                        case UiTarget::FurnaceOutput:
+                            // Z výstupu sa len berie.
+                            if (furnace && !furnace->output.empty()) {
+                                if (shift) {
+                                    furnace->output.count = s.inventory.add(furnace->output);
+                                    if (furnace->output.count <= 0) furnace->output.clear();
+                                } else if (s.held.empty() || (s.held.id == furnace->output.id &&
+                                                               s.held.count + furnace->output.count <= s.held.maxStack())) {
+                                    if (s.held.empty()) s.held = furnace->output;
+                                    else s.held.count += furnace->output.count;
+                                    furnace->output.clear();
+                                }
+                            }
+                            break;
+                        default: break;
                         }
                     }
+                } else if (window.isCursorLocked() && !clickConsumed && Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT) &&
+                           hit.hit && !Input::isKeyDown(GLFW_KEY_LEFT_SHIFT) &&
+                           (hit.id == BlockId::CraftingTable || hit.id == BlockId::RunicAltar || hit.id == BlockId::Furnace)) {
+                    // Pravý klik na stôl / oltár / pec ho otvorí (so Shiftom sa dá na ne stavať).
+                    openContainer(hit.id == BlockId::CraftingTable ? Container::Table
+                                  : hit.id == BlockId::RunicAltar  ? Container::Altar
+                                                                   : Container::Furnace,
+                                  hit.block);
                 } else if (window.isCursorLocked() && !clickConsumed) {
                     // Úder do zvieraťa má prednosť pred blokom, ak je bližšie.
                     float mobDist = 0.0f;
                     int mob = s.entities.raycast(s.camera.position, s.camera.forward(), BlockInteraction::REACH, mobDist);
                     if (mob >= 0 && (!hit.hit || mobDist < hit.distance) && Input::wasMousePressed(GLFW_MOUSE_BUTTON_LEFT)) {
-                        s.entities.hit(mob, s.camera.forward());
+                        const ItemStack& weapon = s.inventory.selectedStack();
+                        const int damage = weapon.empty() ? 1 : itemInfo(weapon.id).damage;
+                        const Mob victim = s.entities.mobs()[mob];
+                        if (s.entities.hit(mob, s.camera.forward(), damage) && !s.creative()) {
+                            // Mäso: jeleň 2–3, ovečka 1–2, žabka nič.
+                            int meat = victim.type == MobType::Deer ? 2 + (victim.id & 1)
+                                     : victim.type == MobType::Sheep ? 1 + (victim.id & 1) : 0;
+                            if (meat > 0) s.drops.spawn(ItemStack::of(Item::RawMeat, meat), victim.position + glm::vec3(0.0f, 0.5f, 0.0f));
+                        }
+                        if (!weapon.empty() && itemInfo(weapon.id).tool == ToolType::Sword && !s.creative())
+                            s.inventory.damageSelected(1);
                         s.interaction.breakCooldown = BlockInteraction::REPEAT; // tento klik nekope
                     } else {
                         s.interaction.update(g.world, s.player, s.inventory, s.drops, hit, s.creative(), dt);
@@ -694,7 +860,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
             Session& s = *session;
             if (!s.creative() && !s.inventoryOpen)
                 hud.drawVitals(ui, s.vitals, s.eatTimer / Session::EAT_TIME, animTime);
-            hud.draw(ui, s.inventory, s.inventoryOpen, s.held, Input::mousePosition(), s.creative());
+            hud.draw(ui, s.uiState(), Input::mousePosition());
 
             if (screen == Screen::Dead) {
                 ui.rect(0, 0, W, H, glm::vec4(0.45f, 0.0f, 0.0f, 0.45f));

@@ -70,6 +70,15 @@ bool saveWorldInfo(const WorldInfo& w)
             f << "look=" << w.yaw << " " << w.pitch << "\n";
             f << "flying=" << (w.flying ? 1 : 0) << "\n";
             f << "vitals=" << w.health << " " << w.hunger << " " << w.saturation << "\n";
+            auto stack = [&](const ItemStack& s) { f << " " << (s.empty() ? 0 : (int)s.id) << " " << (s.empty() ? 0 : s.count); };
+            for (const Furnace& fu : w.furnaces) {
+                if (fu.input.empty() && fu.fuel.empty() && fu.output.empty()) continue; // prázdnu netreba
+                f << "furnace=" << fu.position.x << " " << fu.position.y << " " << fu.position.z;
+                stack(fu.input);
+                stack(fu.fuel);
+                stack(fu.output);
+                f << " " << fu.burnLeft << " " << fu.burnTotal << " " << fu.progress << "\n";
+            }
             f << "selected=" << w.inventory.selected() << "\n";
             for (int i = 0; i < Inventory::SIZE; ++i) {
                 const ItemStack& s = w.inventory.slot(i);
@@ -104,6 +113,20 @@ bool loadWorldInfo(const fs::path& folder, WorldInfo& w)
         else if (key == "look") v >> w.yaw >> w.pitch;
         else if (key == "flying") { int b = 0; v >> b; w.flying = b != 0; }
         else if (key == "vitals") v >> w.health >> w.hunger >> w.saturation;
+        else if (key == "furnace") {
+            Furnace fu;
+            auto stack = [&](ItemStack& s) {
+                int id = 0, count = 0;
+                v >> id >> count;
+                if (isValidItem(id) && count > 0) s = ItemStack::of((Item)id, std::min(count, itemInfo((Item)id).maxStack));
+            };
+            v >> fu.position.x >> fu.position.y >> fu.position.z;
+            stack(fu.input);
+            stack(fu.fuel);
+            stack(fu.output);
+            v >> fu.burnLeft >> fu.burnTotal >> fu.progress;
+            if (v) w.furnaces.push_back(fu);
+        }
         else if (key == "selected") { int s = 0; v >> s; w.inventory.select(s); }
         else if (key == "slot") {
             int i = -1, id = 0, count = 0, durability = -1;

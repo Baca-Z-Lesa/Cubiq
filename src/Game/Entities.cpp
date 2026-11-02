@@ -322,10 +322,10 @@ int EntityManager::raycast(const glm::vec3& o, const glm::vec3& dir, float maxDi
     return best;
 }
 
-void EntityManager::hit(int index, const glm::vec3& fromDir)
+bool EntityManager::hit(int index, const glm::vec3& fromDir, int damage)
 {
     Mob& m = m_mobs[index];
-    m.health -= 1;
+    m.health -= damage;
     m.hurtTimer = 0.35f;
     glm::vec3 push = glm::normalize(glm::vec3(fromDir.x, 0.0f, fromDir.z) + glm::vec3(0.0001f));
     m.velocity = push * 7.0f + glm::vec3(0.0f, 6.0f, 0.0f);
@@ -339,6 +339,7 @@ void EntityManager::hit(int index, const glm::vec3& fromDir)
             o.stateTimer = 6.0f;
             o.repathTimer = 0.0f;
         }
+    return m.health <= 0;
 }
 
 } // namespace cubiq

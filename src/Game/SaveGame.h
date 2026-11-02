@@ -1,4 +1,5 @@
 #pragma once
+#include "Game/Crafting.h"
 #include "Game/Inventory.h"
 
 #include <glm/vec3.hpp>
@@ -25,6 +26,7 @@ struct WorldInfo {
     double time = 0.08;     // čas sveta v dňoch
     Inventory inventory;
     float health = 20.0f, hunger = 20.0f, saturation = 5.0f; // survival
+    std::vector<Furnace> furnaces;
 };
 
 // Priečinok so svetmi: %APPDATA%\Cubiq\saves (inak ./saves).

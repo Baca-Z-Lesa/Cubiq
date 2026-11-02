@@ -46,10 +46,10 @@ struct ItemInfo {
     int food = 0;         // koľko nasýti
 };
 
-inline bool isBlockItem(Item i) { return (uint16_t)i > 0 && (uint16_t)i < (uint16_t)BlockId::Count; }
-inline Item itemOf(BlockId b) { return (Item)(uint16_t)b; }
-inline BlockId blockOf(Item i) { return isBlockItem(i) ? (BlockId)(uint16_t)i : BlockId::Air; }
-inline bool isValidItem(int v) { return (v > 0 && v < (int)BlockId::Count) || (v >= (int)Item::FirstItem && v < (int)Item::End); }
+constexpr bool isBlockItem(Item i) { return (uint16_t)i > 0 && (uint16_t)i < (uint16_t)BlockId::Count; }
+constexpr Item itemOf(BlockId b) { return (Item)(uint16_t)b; }
+constexpr BlockId blockOf(Item i) { return isBlockItem(i) ? (BlockId)(uint16_t)i : BlockId::Air; }
+constexpr bool isValidItem(int v) { return (v > 0 && v < (int)BlockId::Count) || (v >= (int)Item::FirstItem && v < (int)Item::End); }
 
 const ItemInfo& itemInfo(Item item);
 const char* itemName(Item item);
