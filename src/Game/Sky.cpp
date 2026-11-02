@@ -3,7 +3,9 @@
 #include <GL/glew.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace cubiq {
 
@@ -16,7 +18,6 @@ namespace {
 
     glm::vec3 mix3(const glm::vec3& a, const glm::vec3& b, float t) { return a + (b - a) * t; }
 
-    constexpr float CLOUD_HEIGHT = 196.0f;
 }
 
 SkyState computeSky(float t)
@@ -60,9 +61,62 @@ SkyRenderer::SkyRenderer()
 {
     // Core profil vyžaduje naviazaný VAO aj keď vrcholy počítame v shaderi z gl_VertexID.
     glGenVertexArrays(1, &m_emptyVao);
+    createNoiseTexture();
 }
 
-SkyRenderer::~SkyRenderer() { glDeleteVertexArrays(1, &m_emptyVao); }
+SkyRenderer::~SkyRenderer()
+{
+    glDeleteVertexArrays(1, &m_emptyVao);
+    glDeleteTextures(1, &m_noiseTexture);
+}
+
+void SkyRenderer::createNoiseTexture()
+{
+    // Opakujúci sa 3D value noise 64³ pre mraky (vzorkovanie textúry je oveľa rýchlejšie ako
+    // počítať šum v shaderi). R = tvar (nižšie frekvencie), G = detail (vyššie frekvencie).
+    constexpr int S = 64;
+    auto hash = [](int x, int y, int z, int seed) {
+        uint32_t h = (uint32_t)(x * 73856093) ^ (uint32_t)(y * 19349663) ^ (uint32_t)(z * 83492791) ^ (uint32_t)(seed * 2654435761u);
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return ((h ^ (h >> 16)) & 0xFFFF) / 65535.0f;
+    };
+    // Value noise s periódou P buniek (bunka = S / P voxelov) → bezšvové opakovanie.
+    auto noise = [&](float x, float y, float z, int P, int seed) {
+        float cell = (float)S / P;
+        float fx = x / cell, fy = y / cell, fz = z / cell;
+        int ix = (int)std::floor(fx), iy = (int)std::floor(fy), iz = (int)std::floor(fz);
+        float tx = fx - ix, ty = fy - iy, tz = fz - iz;
+        tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty); tz = tz * tz * (3 - 2 * tz);
+        auto v = [&](int dx, int dy, int dz) {
+            return hash(((ix + dx) % P + P) % P, ((iy + dy) % P + P) % P, ((iz + dz) % P + P) % P, seed);
+        };
+        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+        float x00 = lerp(v(0, 0, 0), v(1, 0, 0), tx), x10 = lerp(v(0, 1, 0), v(1, 1, 0), tx);
+        float x01 = lerp(v(0, 0, 1), v(1, 0, 1), tx), x11 = lerp(v(0, 1, 1), v(1, 1, 1), tx);
+        return lerp(lerp(x00, x10, ty), lerp(x01, x11, ty), tz);
+    };
+
+    std::vector<uint8_t> data((size_t)S * S * S * 2);
+    for (int z = 0; z < S; ++z)
+        for (int y = 0; y < S; ++y)
+            for (int x = 0; x < S; ++x) {
+                float shape = noise(x, y, z, 4, 1) * 0.55f + noise(x, y, z, 8, 2) * 0.3f + noise(x, y, z, 16, 3) * 0.15f;
+                float detail = noise(x, y, z, 16, 4) * 0.6f + noise(x, y, z, 32, 5) * 0.4f;
+                size_t i = (((size_t)z * S + y) * S + x) * 2;
+                data[i + 0] = (uint8_t)std::clamp((int)(shape * 255.0f), 0, 255);
+                data[i + 1] = (uint8_t)std::clamp((int)(detail * 255.0f), 0, 255);
+            }
+
+    glGenTextures(1, &m_noiseTexture);
+    glBindTexture(GL_TEXTURE_3D, m_noiseTexture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RG8, S, S, S, 0, GL_RG, GL_UNSIGNED_BYTE, data.data());
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_3D, 0);
+}
 
 void SkyRenderer::drawSky(const SkyState& sky, const glm::mat4& view, const glm::mat4& projection, float time)
 {
@@ -85,27 +139,37 @@ void SkyRenderer::drawSky(const SkyState& sky, const glm::mat4& view, const glm:
     glEnable(GL_DEPTH_TEST);
 }
 
-void SkyRenderer::drawClouds(const SkyState& sky, const glm::mat4& viewProjection, const glm::vec3& cameraPos,
-                             float viewDistance, float time)
+void SkyRenderer::drawClouds(const SkyState& sky, const glm::mat4& view, const glm::mat4& projection,
+                             const glm::vec3& cameraPos, float maxDistance, float time)
 {
     m_cloudShader.bind();
-    m_cloudShader.setMat4("uViewProj", viewProjection);
+    m_cloudShader.setMat4("uInvViewProj", glm::inverse(projection * view));
     m_cloudShader.setVec3("uCameraPos", cameraPos);
-    m_cloudShader.setFloat("uHeight", CLOUD_HEIGHT);
-    m_cloudShader.setFloat("uExtent", viewDistance * 1.6f);
+    m_cloudShader.setInt("uNoise", 1);
     m_cloudShader.setFloat("uTime", time);
+    m_cloudShader.setFloat("uBottom", CLOUD_BOTTOM);
+    m_cloudShader.setFloat("uTop", CLOUD_TOP);
+    m_cloudShader.setFloat("uMaxDistance", maxDistance);
+    m_cloudShader.setVec3("uSunDir", sky.sunDir);
     m_cloudShader.setVec3("uSunColor", sky.sunColor);
     m_cloudShader.setFloat("uSunBrightness", sky.sunBrightness);
+    m_cloudShader.setVec3("uZenith", sky.zenith);
     m_cloudShader.setVec3("uHorizon", sky.horizon);
 
-    glEnable(GL_BLEND);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, m_noiseTexture);
+    glActiveTexture(GL_TEXTURE0);
+
+    glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // farba mrakov je už prenásobená alfou
     glBindVertexArray(m_emptyVao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glEnable(GL_CULL_FACE);
-    glDepthMask(GL_TRUE);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
 }
 
 } // namespace cubiq

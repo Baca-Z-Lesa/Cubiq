@@ -301,8 +301,12 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
     // takže obdĺžnik 5×3 vyzerá presne ako 15 samostatných stien.
     const int sizes[3] = {Chunk::SIZE_X, in.maxY + 1, Chunk::SIZE_Z};
     std::vector<FaceKey> mask;
+    // Indexy nepriehľadných stien zoradené do skupín (sekcia 16×16×16, smer steny),
+    // aby sa dali kresliť len viditeľné sekcie a len steny otočené ku kamere.
+    std::vector<uint32_t> groups[CHUNK_SECTIONS * 6];
 
-    for (const FaceDef& face : FACES) {
+    for (int fi = 0; fi < 6; ++fi) {
+        const FaceDef& face = FACES[fi];
         const int axisN = face.normal.x ? 0 : face.normal.y ? 1 : 2;
         // Osi štvoruholníka: U = smer roh0→roh1, V = smer roh1→roh2.
         int axisU = 0, axisV = 0;
@@ -334,6 +338,8 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
                     while (u + w < su && mask[(size_t)v * su + u + w] == k) ++w;
                     int h = 1;
                     for (; v + h < sv; ++h) {
+                        // Zvislé zlúčenie nesmie prejsť do ďalšej sekcie (16 blokov).
+                        if (axisV == 1 && (v + h) % SECTION_HEIGHT == 0) break;
                         bool rowOk = true;
                         for (int i = 0; i < w && rowOk; ++i) rowOk = mask[(size_t)(v + h) * su + u + i] == k;
                         if (!rowOk) break;
@@ -365,15 +371,69 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
                     }
                     // Uhlopriečku štvorca otočíme podľa jasu rohov, inak by tieň vytváral "pruhy".
                     auto bright = [&](int c) { return AO_LEVELS[k.ao[c]] * std::max(k.light[c * 4], k.light[c * 4 + 1]); };
+                    const int section = (axisN == 1 ? s : v) / SECTION_HEIGHT;
+                    std::vector<uint32_t>& idx = k.liquid ? out.indices : groups[section * 6 + fi];
                     if (bright(0) + bright(2) >= bright(1) + bright(3))
-                        out.indices.insert(out.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+                        idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
                     else
-                        out.indices.insert(out.indices.end(), {base + 1, base + 2, base + 3, base + 1, base + 3, base});
+                        idx.insert(idx.end(), {base + 1, base + 2, base + 3, base + 1, base + 3, base});
 
                     u += w;
                 }
             }
         }
+    }
+
+    data.opaque.groupCounts.resize(CHUNK_SECTIONS * 6);
+    for (int g = 0; g < CHUNK_SECTIONS * 6; ++g) {
+        data.opaque.groupCounts[g] = (uint32_t)groups[g].size();
+        data.opaque.indices.insert(data.opaque.indices.end(), groups[g].begin(), groups[g].end());
+    }
+
+    // --- Viditeľnosť sekcií (cave culling) ---
+    // Pre každú sekciu flood fill cez priechodné bunky: ktoré strany sekcie spája jeden súvislý
+    // priestor? Ak sa napr. zo spodnej strany nedá vzduchom dostať na hornú, kamera zhora cez
+    // túto sekciu nikdy neuvidí, čo je pod ňou.
+    constexpr int SH = SECTION_HEIGHT;
+    std::vector<uint8_t> visited(16 * SH * 16);
+    std::vector<int> stack;
+    for (int sec = 0; sec < CHUNK_SECTIONS; ++sec) {
+        const int y0 = sec * SH;
+        if (y0 > in.maxY) { data.visibility[sec] = ALL_CONNECTED; continue; } // čistý vzduch
+        std::fill(visited.begin(), visited.end(), 0);
+        uint16_t bits = 0;
+        auto cell = [&](int x, int y, int z) { return (y * 16 + z) * 16 + x; };
+        for (int start = 0; start < 16 * SH * 16; ++start) {
+            if (visited[start]) continue;
+            int sx = start % 16, sz = (start / 16) % 16, sy = start / 256;
+            if (isOpaque(in.at(sx, y0 + sy, sz))) { visited[start] = 1; continue; }
+            uint8_t faces = 0;
+            stack.assign(1, start);
+            visited[start] = 1;
+            while (!stack.empty()) {
+                int c = stack.back();
+                stack.pop_back();
+                int x = c % 16, z = (c / 16) % 16, y = c / 256;
+                if (z == 15) faces |= 1 << 0; // +Z
+                if (z == 0) faces |= 1 << 1;  // -Z
+                if (x == 15) faces |= 1 << 2; // +X
+                if (x == 0) faces |= 1 << 3;  // -X
+                if (y == SH - 1) faces |= 1 << 4; // +Y
+                if (y == 0) faces |= 1 << 5;  // -Y
+                const int nb[6][3] = {{x, y, z + 1}, {x, y, z - 1}, {x + 1, y, z}, {x - 1, y, z}, {x, y + 1, z}, {x, y - 1, z}};
+                for (const auto& p : nb) {
+                    if (p[0] < 0 || p[0] > 15 || p[2] < 0 || p[2] > 15 || p[1] < 0 || p[1] >= SH) continue;
+                    int ni = cell(p[0], p[1], p[2]);
+                    if (visited[ni]) continue;
+                    visited[ni] = 1;
+                    if (!isOpaque(in.at(p[0], y0 + p[1], p[2]))) stack.push_back(ni);
+                }
+            }
+            for (int a = 0; a < 6; ++a)
+                for (int b = a + 1; b < 6; ++b)
+                    if ((faces >> a & 1) && (faces >> b & 1)) bits |= facePairBit(a, b);
+        }
+        data.visibility[sec] = bits;
     }
 
     return data;

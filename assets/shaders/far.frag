@@ -10,14 +10,14 @@ uniform float uSunBrightness;
 uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
-uniform float uNearRadius; // vnútri kreslia skutočné chunky
+uniform float uNearRadius; // vnútri (štvorec) kreslia skutočné chunky
 
 out vec4 FragColor;
 
 void main()
 {
-    float horizontal = length(vWorldPos.xz - uCameraPos.xz);
-    if (horizontal < uNearRadius)
+    vec2 d = abs(vWorldPos.xz - uCameraPos.xz);
+    if (max(d.x, d.y) < uNearRadius)
         discard;
 
     // Rovnaký charakter svetla ako bloky: zhora jasno, boky tmavšie, k tomu slnko.

@@ -1,16 +1,10 @@
 #version 330 core
-// Veľký štvorec vo výške mrakov, vždy vycentrovaný nad kamerou (vrcholy z gl_VertexID).
-uniform mat4 uViewProj;
-uniform vec3 uCameraPos;
-uniform float uHeight;
-uniform float uExtent;
-
-out vec3 vWorldPos;
+// Jeden trojuholník cez celú obrazovku (vrcholy z gl_VertexID) – mraky sa počítajú raymarchingom pre každý pixel.
+out vec2 vNdc;
 
 void main()
 {
-    const vec2 corners[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
-    vec2 c = corners[gl_VertexID] * uExtent;
-    vWorldPos = vec3(uCameraPos.x + c.x, uHeight, uCameraPos.z + c.y);
-    gl_Position = uViewProj * vec4(vWorldPos, 1.0);
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0;
+    vNdc = p;
+    gl_Position = vec4(p, 0.0, 1.0);
 }

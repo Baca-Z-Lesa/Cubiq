@@ -22,6 +22,30 @@ uniform float uTime;
 
 out vec4 FragColor;
 
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p)
+{
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+
+// Výška vĺn: 4 vrstvy šumu, každá pootočená a plynúca iným smerom a rýchlosťou,
+// takže sa nevytvára pravidelný pás ani mriežka.
+float waveHeight(vec2 p, float t)
+{
+    const mat2 R = mat2(0.8, -0.6, 0.6, 0.8);
+    float h = 0.0, amp = 0.5;
+    vec2 drift = vec2(0.12, 0.05);
+    for (int i = 0; i < 4; ++i) {
+        h += amp * vnoise(p + drift * t * (1.0 + float(i) * 0.7));
+        p = R * p * 2.03 + vec2(3.7, -1.9);
+        drift = R * drift * -1.3;
+        amp *= 0.5;
+    }
+    return h;
+}
+
 void main()
 {
     // UV v blokoch → súradnica v atlase (textúra sa opakuje po zlúčených stenách)
@@ -42,12 +66,13 @@ void main()
     vec3 ng = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
     vec3 n = ng;
     if (abs(ng.y) > 0.5) {
-        vec2 p = vWorldPos.xz;
-        float dx = 0.10 * cos(p.x * 0.8 + uTime * 1.6) + 0.06 * cos((p.x + p.y) * 1.7 + uTime * 2.3)
-                 + 0.04 * cos(p.x * 3.1 - uTime * 2.9);
-        float dz = 0.10 * cos(p.y * 0.6 + uTime * 1.2) + 0.06 * cos((p.x + p.y) * 1.7 + uTime * 2.3)
-                 + 0.04 * cos(p.y * 2.7 + uTime * 3.3);
-        n = normalize(vec3(-dx, sign(ng.y), -dz));
+        // Normála z derivácie výšky vĺn (konečné diferencie).
+        vec2 p = vWorldPos.xz * 0.6;
+        const float e = 0.08;
+        float h0 = waveHeight(p, uTime);
+        float dx = (waveHeight(p + vec2(e, 0.0), uTime) - h0) / e;
+        float dz = (waveHeight(p + vec2(0.0, e), uTime) - h0) / e;
+        n = normalize(vec3(-dx * 0.22, sign(ng.y), -dz * 0.22));
     }
 
     vec3 v = normalize(uCameraPos - vWorldPos);

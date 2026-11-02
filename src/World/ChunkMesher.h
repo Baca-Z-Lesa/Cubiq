@@ -13,13 +13,16 @@ class World;
 struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<uint32_t> groupCounts; // počty indexov v skupinách (prázdne = jedna skupina)
 };
 
 // Nepriehľadné bloky a priesvitné tekutiny idú do samostatných meshov,
 // lebo voda sa kreslí až po celom teréne s blendingom.
+// Nepriehľadný mesh je rozdelený na skupiny sekcia × smer steny (CHUNK_SECTIONS × 6).
 struct ChunkMeshData {
     MeshData opaque;
     MeshData liquid;
+    std::array<uint16_t, CHUNK_SECTIONS> visibility{}; // prepojenia strán sekcií (cave culling)
 };
 
 // Kópia chunku + okraj MARGIN blokov zo susedov (svetlo dosiahne max. 15 blokov ďaleko).

@@ -20,9 +20,12 @@ SkyState computeSky(float timeOfDay);
 // Čas dňa → "hh:mm" (východ slnka = 06:00).
 void formatClock(float timeOfDay, char* out, int size);
 
-// Obloha cez celú obrazovku (gradient, slnko, mesiac, hviezdy) a vrstva mrakov.
+// Obloha cez celú obrazovku (gradient, slnko, mesiac, hviezdy) a volumetrické mraky.
 class SkyRenderer {
 public:
+    static constexpr float CLOUD_BOTTOM = 190.0f;
+    static constexpr float CLOUD_TOP = 250.0f;
+
     SkyRenderer();
     ~SkyRenderer();
 
@@ -30,13 +33,18 @@ public:
     SkyRenderer& operator=(const SkyRenderer&) = delete;
 
     void drawSky(const SkyState& sky, const glm::mat4& view, const glm::mat4& projection, float time);
-    void drawClouds(const SkyState& sky, const glm::mat4& viewProjection, const glm::vec3& cameraPos,
-                    float viewDistance, float time);
+    // Raymarching cez vrstvu mrakov pre každý pixel. Pod mrakmi sa kreslí pred terénom
+    // (terén ich prekryje), nad nimi alebo v nich až po teréne (mraky zakryjú zem pod sebou).
+    void drawClouds(const SkyState& sky, const glm::mat4& view, const glm::mat4& projection,
+                    const glm::vec3& cameraPos, float maxDistance, float time);
 
 private:
+    void createNoiseTexture();
+
     Shader m_skyShader;
     Shader m_cloudShader;
     unsigned int m_emptyVao = 0;
+    unsigned int m_noiseTexture = 0;
 };
 
 } // namespace cubiq

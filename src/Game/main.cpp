@@ -15,6 +15,7 @@
 #include "Game/BlockHighlight.h"
 #include "Game/DebugOverlay.h"
 #include "Game/FarTerrain.h"
+#include "Game/SectionCulling.h"
 #include "Game/Gui.h"
 #include "Game/Hud.h"
 #include "Game/Inventory.h"
@@ -152,9 +153,11 @@ struct WorldRenderer {
     SkyRenderer sky;
     BlockHighlight highlight;
     bool farTerrain = true; // L = zapnúť/vypnúť vzdialený terén
+    VisibleSections visible;
+    int facesDrawn = 0; // pre F3
 
-    // Dosah vzdialeného terénu: 4× dohľad chunkov (aspoň 384, najviac 1024 blokov).
-    static float farRadiusFor(float nearRadius) { return std::clamp(nearRadius * 4.0f, 384.0f, 1024.0f); }
+    // Dosah vzdialeného terénu: 6× dohľad chunkov (aspoň 512, najviac 1536 blokov).
+    static float farRadiusFor(float nearRadius) { return std::clamp(nearRadius * 6.0f, 512.0f, 1536.0f); }
 
     void draw(GameWorld& game, const Camera& camera, float aspect, const SkyState& s, float animTime,
               const RaycastHit* hit, const Texture& atlas)
@@ -176,8 +179,12 @@ struct WorldRenderer {
         glClearColor(fogColor.r, fogColor.g, fogColor.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // 0) Obloha (pod vodou len farba hmly).
+        // 0) Obloha (pod vodou len farba hmly). Keď je kamera pod mrakmi, mraky patria k oblohe
+        //    a terén, ktorý sa kreslí po nich, ich správne prekryje.
+        const bool cloudsBehindTerrain = camera.position.y < SkyRenderer::CLOUD_BOTTOM;
         if (!underwater) sky.drawSky(s, view, projection, animTime);
+        if (!underwater && cloudsBehindTerrain)
+            sky.drawClouds(s, view, projection, camera.position, viewDistance, animTime);
 
         // 0b) Vzdialený terén – vnútri dohľadu chunkov ho shader vystrihne.
         if (farTerrain && !underwater) {
@@ -197,30 +204,43 @@ struct WorldRenderer {
         blockShader.setFloat("uFogEnd", fogEnd);
         atlas.bind(0);
 
-        // Kreslia sa len chunky v zornom poli kamery (frustum culling) a v dohľade.
+        // Čo kresliť: len sekcie, ktoré môže kamera vidieť (cave culling + frustum),
+        // a v nich len steny otočené ku kamere.
         const Frustum frustum(projection * view);
-        const glm::ivec2 center = World::chunkCoordOf((int)std::floor(camera.position.x), (int)std::floor(camera.position.z));
         const int rd = chunks.renderDistance();
+        visible.compute(game.world, camera.position, rd, frustum);
+        facesDrawn = 0;
+        const glm::vec3 cam = camera.position;
         auto drawChunks = [&](bool liquid) {
             Shader& shader = liquid ? waterShader : blockShader;
             game.world.forEachChunk([&](Chunk& chunk) {
                 Mesh* mesh = liquid ? chunk.liquidMesh.get() : chunk.mesh.get();
                 if (!mesh || mesh->faceCount() == 0) return;
-                glm::ivec2 d = chunk.coord() - center;
-                if (d.x * d.x + d.y * d.y > rd * rd) return;
+                const uint16_t sections = visible.mask(chunk.coord());
+                if (!sections) return;
                 glm::vec3 origin(chunk.coord().x * Chunk::SIZE_X, 0.0f, chunk.coord().y * Chunk::SIZE_Z);
-                glm::vec3 size(Chunk::SIZE_X, chunk.maxY() + 2.0f, Chunk::SIZE_Z);
-                if (!frustum.intersects(origin, origin + size)) return;
                 shader.setMat4("uModel", glm::translate(glm::mat4(1.0f), origin));
-                mesh->draw();
+                if (liquid) {
+                    mesh->draw();
+                    return;
+                }
+                // Stena smerom +X je vidno len z kamery, ktorá je na +X strane od nej (atď.).
+                const bool side[4] = {cam.z > origin.z, cam.z < origin.z + 16.0f, cam.x > origin.x, cam.x < origin.x + 16.0f};
+                facesDrawn += mesh->drawGroups([&](int g) {
+                    int sec = g / 6, f = g % 6;
+                    if (!(sections & (1u << sec))) return false;
+                    if (f < 4) return side[f];
+                    return f == 4 ? cam.y > sec * 16.0f : cam.y < (sec + 1) * 16.0f;
+                });
             });
         };
 
         // 1) Terén
         drawChunks(false);
 
-        // 2) Mraky (pod vodou ich nevidno)
-        if (!underwater) sky.drawClouds(s, projection * view, camera.position, viewDistance, animTime);
+        // 2) Mraky nad kamerou alebo okolo nej – až po teréne, aby zakryli zem pod sebou.
+        if (!underwater && !cloudsBehindTerrain)
+            sky.drawClouds(s, view, projection, camera.position, viewDistance, animTime);
 
         // 3) Voda a láva: vlny, odraz oblohy, odlesk slnka. Priesvitné, viditeľné aj zospodu.
         waterShader.bind();
@@ -600,8 +620,10 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                     "",
                     fmt("Svet: %s   seed %u", s.info.name.c_str(), g.generator.seed()),
                     fmt("Chunky: %zu nacitanych, %zu v rade, dohlad %d", g.world.chunkCount(), g.chunks.pendingCount(), g.chunks.renderDistance()),
-                    fmt("Steny: %d   mesh %.2f ms/chunk (%d)", shownFaces, g.chunks.meshMsAverage(), g.chunks.meshedTotal()),
-                    renderer.farTerrain ? fmt("Vzdialeny teren: %zu dlazdic do %.0f blokov (L)", g.distant.tileCount(),
+                    fmt("Steny: %d, kreslenych %d (%.0f%%)", shownFaces, renderer.facesDrawn,
+                        shownFaces ? 100.0 * renderer.facesDrawn / shownFaces : 0.0),
+                    fmt("Viditelne sekcie: %d   mesh %.2f ms/chunk", renderer.visible.visibleCount(), g.chunks.meshMsAverage()),
+                    renderer.farTerrain ? fmt("Vzdialeny teren: %d/%zu dlazdic do %.0f blokov (L)", g.distant.drawnTiles(), g.distant.tileCount(),
                                               WorldRenderer::farRadiusFor((float)(g.chunks.renderDistance() * Chunk::SIZE_X)))
                                         : std::string("Vzdialeny teren: vypnuty (L)"),
                 };

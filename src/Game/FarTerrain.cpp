@@ -1,4 +1,5 @@
 #include "Game/FarTerrain.h"
+#include "Engine/Frustum.h"
 #include "Game/Sky.h"
 #include "World/TerrainGenerator.h"
 
@@ -17,6 +18,7 @@ namespace cubiq {
 
 namespace {
     int floorDiv(int a, int b) { return (a >= 0) ? a / b : -((-a + b - 1) / b); }
+    int chebyshev(glm::ivec2 d) { return std::max(std::abs(d.x), std::abs(d.y)); }
 
     // Priemerná farba povrchu z diaľky (zodpovedá priemeru textúr blokov).
     glm::vec3 surfaceColor(const TerrainGenerator::Column& c)
@@ -63,42 +65,55 @@ FarTerrain::~FarTerrain()
     }
     m_cv.notify_all();
     m_worker.join();
-    for (auto& [k, t] : m_tiles) {
-        glDeleteBuffers(1, &t.vbo);
-        glDeleteVertexArrays(1, &t.vao);
-    }
+    for (auto& [k, t] : m_tiles) release(t);
 }
 
-FarTerrain::TileData FarTerrain::buildTile(glm::ivec2 coord) const
+void FarTerrain::release(Tile& t)
 {
-    constexpr int N = TILE / STEP + 1; // vrcholy na stranu
-    const int baseX = coord.x * TILE, baseZ = coord.y * TILE;
+    glDeleteBuffers(1, &t.vbo);
+    glDeleteVertexArrays(1, &t.vao);
+}
+
+int FarTerrain::stepFor(glm::ivec2 tile, glm::ivec2 center) const
+{
+    return chebyshev(tile - center) * TILE >= COARSE_FROM ? COARSE_STEP : FINE_STEP;
+}
+
+FarTerrain::TileData FarTerrain::buildTile(Request r) const
+{
+    const int step = r.step;
+    const int N = TILE / step + 1; // vrcholy na stranu
+    const int baseX = r.coord.x * TILE, baseZ = r.coord.y * TILE;
     const int sea = TerrainGenerator::SEA_LEVEL;
 
     // Výšky s okrajom 1 (kvôli normálam) a farby.
-    float height[N + 2][N + 2];
-    glm::vec3 color[N][N];
+    std::vector<float> height((N + 2) * (N + 2));
+    std::vector<glm::vec3> color(N * N);
+    auto H = [&](int i, int j) -> float& { return height[(j + 1) * (N + 2) + (i + 1)]; };
     for (int j = -1; j <= N; ++j)
         for (int i = -1; i <= N; ++i) {
-            TerrainGenerator::Column c = m_generator.columnAt(baseX + i * STEP, baseZ + j * STEP);
-            height[j + 1][i + 1] = (float)std::max(c.height, sea) + 1.0f; // vrch bloku; voda = hladina
-            if (i >= 0 && j >= 0 && i < N && j < N) color[j][i] = surfaceColor(c);
+            TerrainGenerator::Column c = m_generator.columnAt(baseX + i * step, baseZ + j * step);
+            H(i, j) = (float)std::max(c.height, sea) + 1.0f; // vrch bloku; voda = hladina
+            if (i >= 0 && j >= 0 && i < N && j < N) color[j * N + i] = surfaceColor(c);
         }
 
+    TileData t;
+    t.coord = r.coord;
+    t.step = step;
+    t.minY = 1e9f;
+    t.maxY = -1e9f;
     auto vertex = [&](int i, int j) {
-        float h = height[j + 1][i + 1];
-        glm::vec3 n = glm::normalize(glm::vec3(height[j + 1][i] - height[j + 1][i + 2], 2.0f * STEP,
-                                               height[j][i + 1] - height[j + 2][i + 1]));
-        return Vertex{glm::vec3(baseX + i * STEP, h, baseZ + j * STEP), color[j][i], n};
+        float h = H(i, j);
+        t.minY = std::min(t.minY, h);
+        t.maxY = std::max(t.maxY, h);
+        glm::vec3 n = glm::normalize(glm::vec3(H(i - 1, j) - H(i + 1, j), 2.0f * step, H(i, j - 1) - H(i, j + 1)));
+        return Vertex{glm::vec3(baseX + i * step, h, baseZ + j * step), color[j * N + i], n};
     };
 
-    TileData t;
-    t.coord = coord;
     t.vertices.reserve((N - 1) * (N - 1) * 6);
     for (int j = 0; j < N - 1; ++j)
         for (int i = 0; i < N - 1; ++i) {
             Vertex a = vertex(i, j), b = vertex(i + 1, j), c = vertex(i + 1, j + 1), d = vertex(i, j + 1);
-            // Proti smeru hodinových ručičiek pri pohľade zhora.
             t.vertices.insert(t.vertices.end(), {a, d, c, a, c, b});
         }
     return t;
@@ -107,15 +122,15 @@ FarTerrain::TileData FarTerrain::buildTile(glm::ivec2 coord) const
 void FarTerrain::workerLoop()
 {
     for (;;) {
-        glm::ivec2 coord;
+        Request req;
         {
             std::unique_lock lock(m_mutex);
             m_cv.wait(lock, [&] { return m_stop || !m_queue.empty(); });
             if (m_stop) return;
-            coord = m_queue.front();
+            req = m_queue.front();
             m_queue.pop_front();
         }
-        TileData data = buildTile(coord);
+        TileData data = buildTile(req);
         std::lock_guard lock(m_mutex);
         m_done.push_back(std::move(data));
     }
@@ -124,22 +139,24 @@ void FarTerrain::workerLoop()
 void FarTerrain::update(const glm::vec3& cameraPos, float farRadius)
 {
     const glm::ivec2 center(floorDiv((int)std::floor(cameraPos.x), TILE), floorDiv((int)std::floor(cameraPos.z), TILE));
-    const int r = (int)std::ceil(farRadius / TILE) + 1;
+    const int r = (int)std::ceil(farRadius / TILE);
 
-    // Hotové dlaždice → GPU (max. pár za snímku).
+    // Hotové dlaždice → GPU (max. pár za snímku). Hrubšiu/jemnejšiu verziu nahradia na mieste.
     std::vector<TileData> done;
     {
         std::lock_guard lock(m_mutex);
-        size_t n = std::min<size_t>(4, m_done.size());
+        size_t n = std::min<size_t>(6, m_done.size());
         for (size_t i = 0; i < n; ++i) done.push_back(std::move(m_done[i]));
         m_done.erase(m_done.begin(), m_done.begin() + n);
         for (auto& d : done) m_pending.erase(key(d.coord));
     }
     for (TileData& d : done) {
-        glm::ivec2 dc = d.coord - center;
-        if (dc.x * dc.x + dc.y * dc.y > (r + 1) * (r + 1)) continue; // medzitým odišla z dosahu
+        if (chebyshev(d.coord - center) > r + 1) continue; // medzitým odišla z dosahu
         Tile t;
         t.vertexCount = (int)d.vertices.size();
+        t.step = d.step;
+        t.minY = d.minY;
+        t.maxY = d.maxY;
         glGenVertexArrays(1, &t.vao);
         glGenBuffers(1, &t.vbo);
         glBindVertexArray(t.vao);
@@ -152,43 +169,45 @@ void FarTerrain::update(const glm::vec3& cameraPos, float farRadius)
         glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
         glEnableVertexAttribArray(2);
         glBindVertexArray(0);
+        auto it = m_tiles.find(key(d.coord));
+        if (it != m_tiles.end()) release(it->second);
         m_tiles[key(d.coord)] = t;
     }
 
-    if (center == m_lastCenter) return;
+    if (center == m_lastCenter && farRadius == m_lastRadius) return;
     m_lastCenter = center;
+    m_lastRadius = farRadius;
 
-    // Uvoľniť vzdialené
+    // Uvoľniť vzdialené (štvorec, ako chunky)
     for (auto it = m_tiles.begin(); it != m_tiles.end();) {
         glm::ivec2 c((int)(it->first >> 32), (int)(int32_t)(it->first & 0xFFFFFFFF));
-        glm::ivec2 d = c - center;
-        if (d.x * d.x + d.y * d.y > (r + 2) * (r + 2)) {
-            glDeleteBuffers(1, &it->second.vbo);
-            glDeleteVertexArrays(1, &it->second.vao);
+        if (chebyshev(c - center) > r + 1) {
+            release(it->second);
             it = m_tiles.erase(it);
         } else {
             ++it;
         }
     }
 
-    // Vyžiadať chýbajúce, najbližšie najskôr
+    // Vyžiadať chýbajúce alebo s nesprávnou úrovňou detailu, najbližšie najskôr.
     std::vector<glm::ivec2> wanted;
     for (int dz = -r; dz <= r; ++dz)
-        for (int dx = -r; dx <= r; ++dx)
-            if (dx * dx + dz * dz <= r * r) wanted.push_back(center + glm::ivec2(dx, dz));
+        for (int dx = -r; dx <= r; ++dx) wanted.push_back(center + glm::ivec2(dx, dz));
     std::sort(wanted.begin(), wanted.end(), [&](glm::ivec2 a, glm::ivec2 b) {
         glm::ivec2 da = a - center, db = b - center;
         return da.x * da.x + da.y * da.y < db.x * db.x + db.y * db.y;
     });
     {
         std::lock_guard lock(m_mutex);
-        for (glm::ivec2 c : m_queue) m_pending.erase(key(c));
+        for (const Request& q : m_queue) m_pending.erase(key(q.coord));
         m_queue.clear();
         for (glm::ivec2 c : wanted) {
             int64_t k = key(c);
-            if (m_tiles.count(k) || m_pending.count(k)) continue;
+            int step = stepFor(c, center);
+            auto it = m_tiles.find(k);
+            if ((it != m_tiles.end() && it->second.step == step) || m_pending.count(k)) continue;
             m_pending.insert(k);
-            m_queue.push_back(c);
+            m_queue.push_back({c, step});
         }
     }
     m_cv.notify_all();
@@ -207,11 +226,22 @@ void FarTerrain::draw(const glm::mat4& viewProjection, const glm::vec3& cameraPo
     m_shader.setFloat("uFogStart", fogStart);
     m_shader.setFloat("uFogEnd", fogEnd);
     m_shader.setFloat("uNearRadius", nearRadius);
+
+    const Frustum frustum(viewProjection);
     glDisable(GL_CULL_FACE); // z diaľky je vidno len vrch, culling netreba riešiť
+    // Skutočné chunky majú prednosť tam, kde sa s vzdialeným terénom prekrývajú.
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 8.0f);
+    m_drawn = 0;
     for (auto& [k, t] : m_tiles) {
+        glm::ivec2 c((int)(k >> 32), (int)(int32_t)(k & 0xFFFFFFFF));
+        glm::vec3 mn(c.x * TILE, t.minY - 1.0f, c.y * TILE), mx(mn.x + TILE, t.maxY + 1.0f, mn.z + TILE);
+        if (!frustum.intersects(mn, mx)) continue;
         glBindVertexArray(t.vao);
         glDrawArrays(GL_TRIANGLES, 0, t.vertexCount);
+        ++m_drawn;
     }
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
 }
 

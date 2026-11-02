@@ -11,6 +11,22 @@
 
 namespace cubiq {
 
+// Sekcie chunku (16×16×16) pre cave culling.
+constexpr int SECTION_HEIGHT = 16;
+constexpr int CHUNK_SECTIONS = 256 / SECTION_HEIGHT;
+
+// Strany sekcie: 0 = +Z, 1 = -Z, 2 = +X, 3 = -X, 4 = +Y, 5 = -Y (rovnako ako steny v mesheri).
+inline int oppositeFace(int f) { return f ^ 1; }
+
+// Bit pre dvojicu strán (a, b), a != b – 15 dvojíc v uint16_t.
+inline uint16_t facePairBit(int a, int b)
+{
+    if (a > b) { int t = a; a = b; b = t; }
+    static const int OFFSET[6] = {0, 5, 9, 12, 14, 15};
+    return (uint16_t)(1u << (OFFSET[a] + (b - a - 1)));
+}
+constexpr uint16_t ALL_CONNECTED = 0x7FFF;
+
 class Chunk {
 public:
     static constexpr int SIZE_X = 16;
@@ -50,6 +66,8 @@ public:
     bool dirty = true;    // mesh treba prestavať
     bool meshing = false; // mesh sa práve stavia vo vlákne
     bool modified = false; // hráč ho zmenil → treba ho uložiť
+    // Ktoré strany každej sekcie sú prepojené vzduchom (z posledného meshu).
+    std::array<uint16_t, CHUNK_SECTIONS> visibility;
 
 private:
     static int index(int x, int y, int z) { return (y * SIZE_Z + z) * SIZE_X + x; }

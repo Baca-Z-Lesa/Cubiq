@@ -22,6 +22,9 @@ namespace {
         glm::ivec2 d = a - b;
         return d.x * d.x + d.y * d.y;
     }
+
+    // Vzdialenosť v štvorci (načítava sa štvorec chunkov, nie kruh).
+    int chebyshev(glm::ivec2 a, glm::ivec2 b) { return std::max(std::abs(a.x - b.x), std::abs(a.y - b.y)); }
 }
 
 ChunkManager::ChunkManager(World& world, const TerrainGenerator& generator, WorldStorage* storage,
@@ -84,8 +87,7 @@ void ChunkManager::requestMissing(glm::ivec2 center)
     std::vector<glm::ivec2> wanted;
     for (int dx = -r; dx <= r; ++dx)
         for (int dz = -r; dz <= r; ++dz)
-            if (dx * dx + dz * dz <= r * r)
-                wanted.push_back(center + glm::ivec2(dx, dz));
+            wanted.push_back(center + glm::ivec2(dx, dz)); // štvorec ako v Minecrafte
 
     // Najbližšie chunky najskôr.
     std::sort(wanted.begin(), wanted.end(),
@@ -124,7 +126,7 @@ void ChunkManager::unloadFar(glm::ivec2 center)
     const int r = m_renderDistance + 3;
     std::vector<glm::ivec2> toRemove;
     m_world.forEachChunk([&](Chunk& c) {
-        if (distSq(c.coord(), center) > r * r) toRemove.push_back(c.coord());
+        if (chebyshev(c.coord(), center) > r) toRemove.push_back(c.coord());
     });
     for (glm::ivec2 c : toRemove) {
         // Zmenený chunk si pred uvoľnením zapamätáme, inak by sa zmeny stratili.
@@ -154,7 +156,7 @@ void ChunkManager::scheduleMeshes(glm::ivec2 center)
     const int r = m_renderDistance;
     std::vector<Chunk*> todo;
     m_world.forEachChunk([&](Chunk& c) {
-        if (c.dirty && !c.meshing && distSq(c.coord(), center) <= r * r && m_world.hasAllNeighbors(c.coord()))
+        if (c.dirty && !c.meshing && chebyshev(c.coord(), center) <= r && m_world.hasAllNeighbors(c.coord()))
             todo.push_back(&c);
     });
     std::sort(todo.begin(), todo.end(), [&](Chunk* a, Chunk* b) {
@@ -198,7 +200,8 @@ void ChunkManager::uploadMeshes()
         // Chunk mohol byť medzitým uvoľnený – potom výsledok zahodíme.
         Chunk* c = m_world.getChunk(r.coord);
         if (!c) continue;
-        c->mesh = std::make_unique<Mesh>(r.data.opaque.vertices, r.data.opaque.indices);
+        c->mesh = std::make_unique<Mesh>(r.data.opaque.vertices, r.data.opaque.indices, r.data.opaque.groupCounts);
+        c->visibility = r.data.visibility;
         c->liquidMesh = std::make_unique<Mesh>(r.data.liquid.vertices, r.data.liquid.indices);
         c->meshing = false;
     }

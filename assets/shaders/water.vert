@@ -19,6 +19,15 @@ out vec3 vWorldPos;
 out float vDistance;
 flat out int vLava;
 
+// Šum hodnôt – nepravidelné vlny bez opakujúceho sa vzoru (na rozdiel od sínusov).
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p)
+{
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+
 void main()
 {
     vec4 world = uModel * vec4(aPos, 1.0);
@@ -26,8 +35,10 @@ void main()
 
     // Vlnenie hladiny: len vrcholy na hladine (y = .875 v rámci bloku), nie dno ani boky pod ňou.
     if (vLava == 0 && abs(fract(aPos.y) - 0.875) < 0.01) {
-        world.y += 0.05 * sin(world.x * 0.8 + uTime * 1.6) * cos(world.z * 0.6 + uTime * 1.2)
-                 + 0.03 * sin((world.x + world.z) * 1.7 + uTime * 2.3);
+        vec2 p = world.xz;
+        float swell = vnoise(p * 0.18 + vec2(uTime * 0.12, uTime * 0.05))
+                    + 0.5 * vnoise(mat2(0.8, -0.6, 0.6, 0.8) * p * 0.45 - vec2(uTime * 0.21, -uTime * 0.17));
+        world.y += (swell - 0.75) * 0.12;
     }
 
     vUV = aUV;

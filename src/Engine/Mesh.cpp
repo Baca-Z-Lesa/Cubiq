@@ -5,9 +5,16 @@
 
 namespace cubiq {
 
-Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
-    : m_indexCount((int)indices.size())
+Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices,
+           const std::vector<uint32_t>& groupCounts)
+    : m_indexCount((int)indices.size()), m_groupCounts(groupCounts)
 {
+    uint32_t start = 0;
+    for (uint32_t c : m_groupCounts) {
+        m_groupStarts.push_back(start);
+        start += c;
+    }
+
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
     glGenBuffers(1, &m_ebo);
@@ -41,6 +48,13 @@ Mesh::~Mesh()
     glDeleteBuffers(1, &m_ebo);
     glDeleteBuffers(1, &m_vbo);
     glDeleteVertexArrays(1, &m_vao);
+}
+
+void Mesh::drawMulti() const
+{
+    if (m_counts.empty()) return;
+    glBindVertexArray(m_vao);
+    glMultiDrawElements(GL_TRIANGLES, m_counts.data(), GL_UNSIGNED_INT, m_offsets.data(), (GLsizei)m_counts.size());
 }
 
 void Mesh::draw() const
