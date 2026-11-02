@@ -69,6 +69,7 @@ bool saveWorldInfo(const WorldInfo& w)
             f << "player=" << w.position.x << " " << w.position.y << " " << w.position.z << "\n";
             f << "look=" << w.yaw << " " << w.pitch << "\n";
             f << "flying=" << (w.flying ? 1 : 0) << "\n";
+            f << "vitals=" << w.health << " " << w.hunger << " " << w.saturation << "\n";
             f << "selected=" << w.inventory.selected() << "\n";
             for (int i = 0; i < Inventory::SIZE; ++i) {
                 const ItemStack& s = w.inventory.slot(i);
@@ -102,6 +103,7 @@ bool loadWorldInfo(const fs::path& folder, WorldInfo& w)
         else if (key == "player") { v >> w.position.x >> w.position.y >> w.position.z; w.hasPlayer = true; }
         else if (key == "look") v >> w.yaw >> w.pitch;
         else if (key == "flying") { int b = 0; v >> b; w.flying = b != 0; }
+        else if (key == "vitals") v >> w.health >> w.hunger >> w.saturation;
         else if (key == "selected") { int s = 0; v >> s; w.inventory.select(s); }
         else if (key == "slot") {
             int i = -1, id = 0, count = 0, durability = -1;

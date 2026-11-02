@@ -7,6 +7,7 @@
 namespace cubiq {
 
 class UIRenderer;
+struct Vitals;
 
 // Herné UI: zameriavač, hotbar a obrazovka inventára (E).
 // V kreatívnom móde je nad inventárom katalóg všetkých predmetov.
@@ -14,6 +15,10 @@ class Hud {
 public:
     void draw(UIRenderer& ui, const Inventory& inventory, bool inventoryOpen, const ItemStack& held,
               glm::vec2 mouse, bool creative) const;
+
+    // Srdiečka, hlad a bubliny nad hotbarom + červené bliknutie pri zranení (len survival).
+    // eating 0..1 = priebeh jedenia.
+    void drawVitals(UIRenderer& ui, const Vitals& vitals, float eating, float time) const;
 
     // Index slotu pod myšou v otvorenom inventári, alebo -1.
     int slotAt(int width, int height, glm::vec2 mouse, bool creative) const;

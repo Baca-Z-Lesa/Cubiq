@@ -25,6 +25,7 @@
 #include "Game/Player.h"
 #include "Game/SaveGame.h"
 #include "Game/Sky.h"
+#include "Game/Vitals.h"
 #include "World/ChunkManager.h"
 #include "World/Raycast.h"
 #include "World/TerrainGenerator.h"
@@ -325,10 +326,26 @@ struct Session {
     BlockInteraction interaction;
     EntityManager entities; // zvieratá sa neukladajú, objavujú sa znova podľa biómu
     DroppedItems drops;     // predmety na zemi sa tiež neukladajú
+    Vitals vitals;
+    float eatTimer = 0.0f;  // ako dlho sa drží pravé tlačidlo s jedlom
     double worldTime = 0.08;
     float autosaveTimer = 0.0f;
 
+    static constexpr float EAT_TIME = 1.2f;
+
     bool creative() const { return info.creative; }
+
+    // Smrť: všetko z inventára vypadne na zem.
+    void dropEverything()
+    {
+        const glm::vec3 at = player.position + glm::vec3(0.0f, 1.0f, 0.0f);
+        for (int i = 0; i < Inventory::SIZE; ++i) {
+            drops.spawn(inventory.slot(i), at);
+            inventory.slot(i).clear();
+        }
+        drops.spawn(held, at);
+        held.clear();
+    }
 
     void save()
     {
@@ -341,6 +358,9 @@ struct Session {
         info.time = worldTime;
         info.inventory = inventory;
         if (!held.empty()) info.inventory.add(held);
+        info.health = vitals.health;
+        info.hunger = vitals.hunger;
+        info.saturation = vitals.saturation;
         info.lastPlayed = nowUnix();
         saveWorldInfo(info);
         game->chunks.saveAll();
@@ -365,6 +385,13 @@ static std::unique_ptr<Session> startSession(const WorldInfo& info, bool persist
         s->camera.pitch = info.pitch;
         s->camera.position = s->player.eyePosition();
         s->inventory = info.inventory;
+        s->vitals.health = info.health;
+        s->vitals.hunger = info.hunger;
+        s->vitals.saturation = info.saturation;
+        if (s->vitals.dead()) { // uložené počas smrti → začni znova na spawne
+            s->vitals.reset();
+            spawnPlayer(s->player, s->camera, s->game->generator);
+        }
     } else {
         spawnPlayer(s->player, s->camera, s->game->generator, startAt);
         giveStarterItems(s->inventory, info.creative);
@@ -374,7 +401,7 @@ static std::unique_ptr<Session> startSession(const WorldInfo& info, bool persist
 
 // ------------------------------------------------------------------ menu
 
-enum class Screen { Title, Worlds, Create, Game, Paused };
+enum class Screen { Title, Worlds, Create, Game, Paused, Dead };
 
 // Pozadie menu: skutočný svet (lietajúce ostrovy v seede 7), kamera sa pomaly otáča.
 struct MenuBackground {
@@ -495,7 +522,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
             glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
         }
 
-        const bool inGame = screen == Screen::Game || screen == Screen::Paused;
+        const bool inGame = screen == Screen::Game || screen == Screen::Paused || screen == Screen::Dead;
         bool clickConsumed = false; // klik, ktorý len zamkol myš alebo kliklo menu, nemá kopať
         const bool clicked = Input::wasMousePressed(GLFW_MOUSE_BUTTON_LEFT);
 
@@ -538,13 +565,15 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                     if (Input::wasKeyPressed(GLFW_KEY_1 + i)) s.inventory.select(i);
                 if (float scroll = Input::scrollDelta(); scroll != 0.0f && !s.inventoryOpen)
                     s.inventory.select(s.inventory.selected() + (scroll > 0 ? -1 : 1));
-            } else if (Input::wasKeyPressed(GLFW_KEY_ESCAPE)) {
+            } else if (screen == Screen::Paused && Input::wasKeyPressed(GLFW_KEY_ESCAPE)) {
                 screen = Screen::Game;
                 window.setCursorLocked(true);
             }
 
             // Pauza zastaví čas aj hráča (svet sa ďalej načítava a kreslí).
+            // Pri smrti beží svet ďalej (predmety dopadnú na zem), hráč stojí.
             const bool running = screen == Screen::Game;
+            if (screen == Screen::Dead) s.drops.update(g.world, s.inventory, glm::vec3(0.0f, -1000.0f, 0.0f), dt);
             const bool playing = running && window.isCursorLocked() && !s.inventoryOpen;
             if (running) {
                 s.worldTime += dt / DAY_LENGTH_SECONDS;
@@ -554,7 +583,18 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                     for (int i = 0; i < 64 && collidesWithWorld(g.world, s.player.bounds()); ++i)
                         s.player.position.y += 1.0f;
                     glm::vec3 flatForward = glm::normalize(glm::vec3(s.camera.forward().x, 0.0f, s.camera.forward().z));
-                    s.player.update(g.world, readControls(playing), flatForward, s.camera.right(), dt);
+                    Player::Controls controls = readControls(playing);
+                    if (!s.creative() && s.vitals.hunger <= 6.0f) controls.sprint = false; // hladný nešprintuje
+                    s.player.update(g.world, controls, flatForward, s.camera.right(), dt);
+
+                    if (!s.creative()) {
+                        s.vitals.update(g.world, s.player, dt);                        if (s.vitals.dead()) {
+                            s.dropEverything();
+                            s.inventoryOpen = false;
+                            screen = Screen::Dead;
+                            window.setCursorLocked(false);
+                        }
+                    }
                 }
                 float targetFov = s.player.sprinting ? 80.0f : 70.0f;
                 s.camera.fov += (targetFov - s.camera.fov) * std::min(1.0f, dt * 10.0f);
@@ -604,6 +644,21 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                     } else {
                         s.interaction.update(g.world, s.player, s.inventory, s.drops, hit, s.creative(), dt);
                     }
+
+                    // Jedenie: držať pravé tlačidlo s jedlom v ruke (len keď je hlad).
+                    ItemStack& food = s.inventory.selectedStack();
+                    const bool canEat = !s.creative() && !food.empty() && itemInfo(food.id).food > 0 &&
+                                        s.vitals.hunger < Vitals::MAX_HUNGER;
+                    if (canEat && Input::isMouseDown(GLFW_MOUSE_BUTTON_RIGHT)) {
+                        s.eatTimer += dt;
+                        if (s.eatTimer >= Session::EAT_TIME) {
+                            s.vitals.eat(itemInfo(food.id).food);
+                            if (--food.count <= 0) food.clear();
+                            s.eatTimer = 0.0f;
+                        }
+                    } else {
+                        s.eatTimer = 0.0f;
+                    }
                 }
             }
 
@@ -637,7 +692,28 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
 
         if (inGame) {
             Session& s = *session;
+            if (!s.creative() && !s.inventoryOpen)
+                hud.drawVitals(ui, s.vitals, s.eatTimer / Session::EAT_TIME, animTime);
             hud.draw(ui, s.inventory, s.inventoryOpen, s.held, Input::mousePosition(), s.creative());
+
+            if (screen == Screen::Dead) {
+                ui.rect(0, 0, W, H, glm::vec4(0.45f, 0.0f, 0.0f, 0.45f));
+                gui.text("Zomrel si", W * 0.5f, H * 0.26f, 5.0f * S, glm::vec4(1.0f, 0.85f, 0.85f, 1.0f), true);
+                std::string cause = std::string("Pricina: ") + s.vitals.lastDamage;
+                gui.text(cause.c_str(), W * 0.5f, H * 0.26f + 44.0f * S, 1.5f * S, WHITE, true);
+                gui.text("Predmety ostali lezat na mieste smrti", W * 0.5f, H * 0.26f + 58.0f * S, S, GRAY, true);
+                float x = W * 0.5f - bw * 0.5f, y = H * 0.50f;
+                if (gui.button("Znovu ozit", x, y, bw, bh)) {
+                    s.vitals.reset();
+                    s.interaction.progress = 0.0f;
+                    spawnPlayer(s.player, s.camera, s.game->generator);
+                    s.camera.position = s.player.eyePosition();
+                    screen = Screen::Game;
+                    window.setCursorLocked(true);
+                }
+                y += bh + gap;
+                if (gui.button(s.persistent ? "Ulozit a odist do menu" : "Odist do menu", x, y, bw, bh)) leaveToMenu();
+            }
 
             if (!worldReadyAt(s.game->world, s.player.position)) {
                 gui.dim(0.65f);

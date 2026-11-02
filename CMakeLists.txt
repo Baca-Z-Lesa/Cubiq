@@ -85,6 +85,7 @@ add_executable(Cubiq
     src/Game/EntityRenderer.cpp
     src/Game/Item.cpp
     src/Game/DroppedItems.cpp
+    src/Game/Vitals.cpp
 )
 if(WIN32)
     # Ikona aplikácie a údaje o verzii v .exe; bez konzolového okna v Release.

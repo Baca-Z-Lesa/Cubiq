@@ -1,6 +1,7 @@
 #include "Game/Hud.h"
 #include "Engine/UIRenderer.h"
 #include "Game/BlockAtlas.h"
+#include "Game/Vitals.h"
 
 #include <algorithm>
 #include <cmath>
@@ -223,6 +224,66 @@ void Hud::draw(UIRenderer& ui, const Inventory& inventory, bool inventoryOpen, c
         drawStack(ui, held, {mouse.x - slot * 0.5f, mouse.y - slot * 0.5f, slot, slot}, s);
     } else if (tooltip) {
         drawTooltip(ui, tooltip, mouse, s);
+    }
+}
+
+namespace {
+    // Pixelové ikony 7×7 ('X' = farba, 'o' = svetlý odlesk / kosť).
+    const char* HEART[7] = {".XX.XX.", "XoXXXXX", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX..", "...X..."};
+    const char* FOOD[7] = {"...XXX.", "..XXXXX", ".XXXXXX", ".XXXXX.", "..XXX..", ".o.....", "o.o...."};
+    const char* BUBBLE[7] = {".......", "..XXX..", ".XoXXX.", ".XoXXX.", ".XXXXX.", "..XXX..", "......."};
+
+    // columns = koľko stĺpcov kresliť (polovičná ikona = 4).
+    void drawIcon(UIRenderer& ui, const char* const* pattern, float x, float y, float s, glm::vec4 color,
+                  glm::vec4 light, int columns = 7)
+    {
+        for (int r = 0; r < 7; ++r)
+            for (int c = 0; c < columns; ++c) {
+                char ch = pattern[r][c];
+                if (ch == '.') continue;
+                ui.rect(x + c * s, y + r * s, s, s, ch == 'o' ? light : color);
+            }
+    }
+
+    // Rad 10 ikon: plné, polovičné a prázdne (tmavý tieň). rightToLeft = hlad sa míňa sprava.
+    void drawRow(UIRenderer& ui, const char* const* pattern, float value, float x, float y, float s, glm::vec4 color,
+                 glm::vec4 light, bool rightToLeft, float shake)
+    {
+        const glm::vec4 empty(0.0f, 0.0f, 0.0f, 0.55f);
+        for (int i = 0; i < 10; ++i) {
+            float ix = rightToLeft ? x - (i + 1) * 8 * s : x + i * 8 * s;
+            float iy = y + (shake > 0.0f ? std::sin(i * 2.1f + shake * 40.0f) * s : 0.0f);
+            drawIcon(ui, pattern, ix + s * 0.5f, iy + s * 0.5f, s, empty, empty);
+            float v = value - i * 2.0f;
+            if (v >= 2.0f) drawIcon(ui, pattern, ix, iy, s, color, light);
+            else if (v >= 1.0f) drawIcon(ui, pattern, ix, iy, s, color, light, 4);
+        }
+    }
+}
+
+void Hud::drawVitals(UIRenderer& ui, const Vitals& v, float eating, float time) const
+{
+    const int w = ui.width(), h = ui.height();
+    const float s = uiScale(h);
+    const Rect first = hotbarSlotRect(0, w, h), last = hotbarSlotRect(Inventory::HOTBAR - 1, w, h);
+    const float y = first.y - 10 * s;
+
+    if (v.hurtTimer > 0.0f) ui.rect(0, 0, (float)w, (float)h, glm::vec4(0.8f, 0.0f, 0.0f, v.hurtTimer * 0.6f));
+
+    // Pri nízkych životoch sa srdiečka trasú.
+    drawRow(ui, HEART, v.health, first.x, y, s, glm::vec4(0.86f, 0.12f, 0.14f, 1), glm::vec4(1.0f, 0.75f, 0.75f, 1),
+            false, v.health <= 4.0f ? time : 0.0f);
+    drawRow(ui, FOOD, v.hunger, last.x + last.w, y, s, glm::vec4(0.72f, 0.42f, 0.18f, 1), glm::vec4(0.95f, 0.92f, 0.85f, 1),
+            true, 0.0f);
+    if (v.air < Vitals::MAX_AIR) {
+        float bubbles = std::ceil(v.air / Vitals::MAX_AIR * 20.0f);
+        drawRow(ui, BUBBLE, bubbles, last.x + last.w, y - 9 * s, s, glm::vec4(0.35f, 0.65f, 1.0f, 1),
+                glm::vec4(0.9f, 0.97f, 1.0f, 1), true, 0.0f);
+    }
+    if (eating > 0.0f) {
+        float bw = 40 * s, bx = (w - bw) * 0.5f, by = h * 0.5f + 12 * s;
+        ui.rect(bx, by, bw, 3 * s, glm::vec4(0, 0, 0, 0.6f));
+        ui.rect(bx, by, bw * eating, 3 * s, glm::vec4(0.9f, 0.6f, 0.25f, 1.0f));
     }
 }
 

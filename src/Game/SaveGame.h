@@ -24,6 +24,7 @@ struct WorldInfo {
     bool flying = false;
     double time = 0.08;     // čas sveta v dňoch
     Inventory inventory;
+    float health = 20.0f, hunger = 20.0f, saturation = 5.0f; // survival
 };
 
 // Priečinok so svetmi: %APPDATA%\Cubiq\saves (inak ./saves).
