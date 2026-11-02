@@ -43,6 +43,10 @@ enum class BlockId : uint8_t {
     CrackedStoneBricks,
     Glass,
     Lantern,
+    CraftingTable,
+    Furnace,
+    RunicAltar,
+    SkyCrystalOre, // rastie len na lietajúcich ostrovoch
     Count
 };
 
@@ -89,6 +93,12 @@ enum Tile : int {
     TILE_CRACKED_STONE_BRICKS,
     TILE_GLASS,
     TILE_LANTERN,
+    TILE_TABLE_TOP,
+    TILE_TABLE_SIDE,
+    TILE_FURNACE_FRONT,
+    TILE_ALTAR_TOP,
+    TILE_ALTAR_SIDE,
+    TILE_SKY_CRYSTAL_ORE,
     TILE_COUNT
 };
 

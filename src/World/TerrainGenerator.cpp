@@ -363,10 +363,12 @@ BlockId TerrainGenerator::terrainMaterial(int x, int y, int z, int depth, const 
     return BlockId::Stone;
 }
 
-BlockId TerrainGenerator::islandMaterial(int depth, const Column& c) const
+BlockId TerrainGenerator::islandMaterial(int x, int y, int z, int depth, const Column& c) const
 {
     if (depth == 0) return c.cold ? BlockId::SnowyGrass : BlockId::Grass;
     if (depth < 3) return BlockId::Dirt;
+    // Nebeské kryštály rastú len vo vnútri lietajúcich ostrovov (zhluky 2×2×2).
+    if (depth > 3 && (hash3(x >> 1, y >> 1, z >> 1, m_seed ^ 0x5C1A7u) % 1000u) < 22u) return BlockId::SkyCrystalOre;
     return BlockId::Stone;
 }
 
@@ -380,7 +382,7 @@ TerrainGenerator::Surface TerrainGenerator::surfaceAt(int x, int z) const
     if (c.islandShape > 0.0f) {
         int top = std::min(c.islandCenter + 12, Chunk::SIZE_Y - 1);
         for (int y = top; y > c.height + 16; --y)
-            if (islandSolid(y, c, islandAt(x, y, z))) return {y, islandMaterial(0, c), c.biome, true};
+            if (islandSolid(y, c, islandAt(x, y, z))) return {y, islandMaterial(x, y, z, 0, c), c.biome, true};
     }
 
     int slope = 0;
@@ -496,7 +498,7 @@ void TerrainGenerator::generate(Chunk& chunk) const
                 }
                 depth = depth < 0 ? 0 : depth + 1;
                 if (onIsland) {
-                    chunk.set(x, y, z, islandMaterial(depth, c));
+                    chunk.set(x, y, z, islandMaterial(wx, y, wz, depth, c));
                 } else {
                     if (mainSurface < 0) mainSurface = y;
                     chunk.set(x, y, z, terrainMaterial(wx, y, wz, depth, c, slope));

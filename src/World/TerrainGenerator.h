@@ -87,7 +87,7 @@ private:
     static bool terrainSolid(int y, const Column& c, float overhangNoise);
     static bool islandSolid(int y, const Column& c, float islandNoise);
     BlockId terrainMaterial(int x, int y, int z, int depth, const Column& c, int slope) const;
-    BlockId islandMaterial(int depth, const Column& c) const;
+    BlockId islandMaterial(int x, int y, int z, int depth, const Column& c) const;
     BlockId strata(int x, int y, int z) const;
 
     uint32_t m_seed;

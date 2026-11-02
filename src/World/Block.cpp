@@ -43,6 +43,10 @@ static const BlockType BLOCK_TYPES[(int)BlockId::Count] = {
     {"cracked_stone_bricks", true, true, false, false, true, TILE_CRACKED_STONE_BRICKS, TILE_CRACKED_STONE_BRICKS, TILE_CRACKED_STONE_BRICKS},
     {"glass",             true,  false, false, true,  true,  TILE_GLASS,            TILE_GLASS,            TILE_GLASS},
     {"lantern",           true,  true,  false, false, true,  TILE_LANTERN,          TILE_LANTERN,          TILE_LANTERN,       15, 11,  6},
+    {"crafting_table",    true,  true,  false, false, true,  TILE_TABLE_TOP,        TILE_TABLE_SIDE,       TILE_OAK_PLANKS},
+    {"furnace",           true,  true,  false, false, true,  TILE_COBBLESTONE,      TILE_FURNACE_FRONT,    TILE_COBBLESTONE},
+    {"runic_altar",       true,  true,  false, false, true,  TILE_ALTAR_TOP,        TILE_ALTAR_SIDE,       TILE_STONE_BRICKS,   6,  9, 15},
+    {"sky_crystal_ore",   true,  true,  false, false, true,  TILE_SKY_CRYSTAL_ORE,  TILE_SKY_CRYSTAL_ORE,  TILE_SKY_CRYSTAL_ORE, 9, 12, 15},
 };
 
 const BlockType& blockType(BlockId id) { return BLOCK_TYPES[(int)id]; }

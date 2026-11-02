@@ -16,6 +16,7 @@ struct WorldInfo {
     uint32_t seed = 0;
     int64_t created = 0;
     int64_t lastPlayed = 0;
+    bool creative = false;  // kreatívny mód: nekonečné bloky, let, okamžité kopanie
 
     bool hasPlayer = false; // false = nový svet, hráč sa spawne na štandardnom mieste
     glm::vec3 position{0.0f};
@@ -32,7 +33,7 @@ std::filesystem::path savesDirectory();
 std::vector<WorldInfo> listWorlds();
 
 // Nový svet v novom priečinku (názov priečinka sa odvodí z mena).
-WorldInfo createWorld(const std::string& name, uint32_t seed);
+WorldInfo createWorld(const std::string& name, uint32_t seed, bool creative);
 
 bool saveWorldInfo(const WorldInfo& info);
 bool loadWorldInfo(const std::filesystem::path& folder, WorldInfo& out);

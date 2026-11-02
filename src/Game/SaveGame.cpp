@@ -64,6 +64,7 @@ bool saveWorldInfo(const WorldInfo& w)
         f << "created=" << w.created << "\n";
         f << "lastPlayed=" << w.lastPlayed << "\n";
         f << "time=" << w.time << "\n";
+        f << "mode=" << (w.creative ? "creative" : "survival") << "\n";
         if (w.hasPlayer) {
             f << "player=" << w.position.x << " " << w.position.y << " " << w.position.z << "\n";
             f << "look=" << w.yaw << " " << w.pitch << "\n";
@@ -71,7 +72,7 @@ bool saveWorldInfo(const WorldInfo& w)
             f << "selected=" << w.inventory.selected() << "\n";
             for (int i = 0; i < Inventory::SIZE; ++i) {
                 const ItemStack& s = w.inventory.slot(i);
-                if (!s.empty()) f << "slot=" << i << " " << (int)s.id << " " << s.count << "\n";
+                if (!s.empty()) f << "slot=" << i << " " << (int)s.id << " " << s.count << " " << s.durability << "\n";
             }
         }
     }
@@ -85,6 +86,7 @@ bool loadWorldInfo(const fs::path& folder, WorldInfo& w)
     if (!f) return false;
     w = WorldInfo{};
     w.folder = folder;
+    w.creative = true; // svety spred survivalu nemajú kľúč mode – boli kreatívne
     std::string line;
     while (std::getline(f, line)) {
         auto eq = line.find('=');
@@ -96,16 +98,18 @@ bool loadWorldInfo(const fs::path& folder, WorldInfo& w)
         else if (key == "created") v >> w.created;
         else if (key == "lastPlayed") v >> w.lastPlayed;
         else if (key == "time") v >> w.time;
+        else if (key == "mode") w.creative = line.substr(eq + 1) == "creative";
         else if (key == "player") { v >> w.position.x >> w.position.y >> w.position.z; w.hasPlayer = true; }
         else if (key == "look") v >> w.yaw >> w.pitch;
         else if (key == "flying") { int b = 0; v >> b; w.flying = b != 0; }
         else if (key == "selected") { int s = 0; v >> s; w.inventory.select(s); }
         else if (key == "slot") {
-            int i = -1, id = 0, count = 0;
-            v >> i >> id >> count;
-            if (i >= 0 && i < Inventory::SIZE && id > 0 && id < (int)BlockId::Count && count > 0) {
-                w.inventory.slot(i).id = (BlockId)id;
-                w.inventory.slot(i).count = std::min(count, Inventory::MAX_STACK);
+            int i = -1, id = 0, count = 0, durability = -1;
+            v >> i >> id >> count >> durability;
+            if (i >= 0 && i < Inventory::SIZE && isValidItem(id) && count > 0) {
+                ItemStack& s = w.inventory.slot(i);
+                s = ItemStack::of((Item)id, std::min(count, itemInfo((Item)id).maxStack));
+                if (durability > 0) s.durability = std::min(durability, itemInfo((Item)id).durability);
             }
         }
     }
@@ -126,7 +130,7 @@ std::vector<WorldInfo> listWorlds()
     return worlds;
 }
 
-WorldInfo createWorld(const std::string& name, uint32_t seed)
+WorldInfo createWorld(const std::string& name, uint32_t seed, bool creative)
 {
     // Názov priečinka: len bezpečné znaky, pri zhode pridáme číslo.
     std::string base;
@@ -139,6 +143,7 @@ WorldInfo createWorld(const std::string& name, uint32_t seed)
     w.name = name.empty() ? "Novy svet" : name;
     w.folder = dir;
     w.seed = seed;
+    w.creative = creative;
     w.created = w.lastPlayed = nowUnix();
     saveWorldInfo(w);
     return w;

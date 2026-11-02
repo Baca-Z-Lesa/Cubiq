@@ -83,6 +83,8 @@ add_executable(Cubiq
     src/Game/Pathfinder.cpp
     src/Game/Entities.cpp
     src/Game/EntityRenderer.cpp
+    src/Game/Item.cpp
+    src/Game/DroppedItems.cpp
 )
 if(WIN32)
     # Ikona aplikácie a údaje o verzii v .exe; bez konzolového okna v Release.

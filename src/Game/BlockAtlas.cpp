@@ -220,6 +220,204 @@ std::vector<uint8_t> generateBlockAtlas()
         p.put(TILE_LANTERN, x, y, frame ? Rgb{58, 52, 48} : glow, frame ? 6 : 4, 59);
     });
 
+    // --- Pracovné bloky ---
+    p.fill(TILE_TABLE_TOP, [&](int x, int y) {
+        bool grid = x == 0 || y == 0 || x == 15 || y == 15 || x == 5 || x == 10 || y == 5 || y == 10;
+        p.put(TILE_TABLE_TOP, x, y, grid ? Rgb{96, 68, 38} : Rgb{176, 140, 88}, 7, 60);
+    });
+    p.fill(TILE_TABLE_SIDE, [&](int x, int y) {
+        Rgb c = y < 3 ? Rgb{150, 110, 62} : (y % 4 == 3 ? Rgb{120, 92, 56} : Rgb{168, 134, 84});
+        if (y >= 5 && y <= 11 && (x == 3 || x == 12)) c = {80, 80, 84};          // náradie na boku
+        if (y == 5 && x >= 2 && x <= 4) c = {150, 150, 156};
+        p.put(TILE_TABLE_SIDE, x, y, c, 6, 61);
+    });
+    p.fill(TILE_FURNACE_FRONT, [&](int x, int y) {
+        int cx = (x + (y / 5 % 2) * 3) / 5, cy = y / 5;
+        bool seam = (x + (y / 5 % 2) * 3) % 5 == 0 || y % 5 == 0;
+        int shade = (int)(hash(cx, cy, 62) % 30);
+        Rgb c = seam ? Rgb{78, 78, 80} : Rgb{118 + shade, 118 + shade, 120 + shade};
+        if (x >= 4 && x <= 11 && y >= 8 && y <= 13) c = (y >= 11) ? Rgb{255, 150, 40} : Rgb{30, 26, 24}; // otvor so žeravými uhlíkmi
+        p.put(TILE_FURNACE_FRONT, x, y, c, 6, 63);
+    });
+    p.fill(TILE_ALTAR_TOP, [&](int x, int y) {
+        float d = std::hypot(x - 7.5f, y - 7.5f);
+        Rgb c = (x % 8 == 0 || y % 8 == 0) ? Rgb{84, 84, 90} : Rgb{122, 120, 132};
+        if (d > 4.5f && d < 5.8f) c = {80, 220, 240};                                  // žiariaci runový kruh
+        if (d < 1.6f) c = {200, 250, 255};
+        p.put(TILE_ALTAR_TOP, x, y, c, 5, 64);
+    });
+    p.fill(TILE_ALTAR_SIDE, [&](int x, int y) {
+        int row = y / 8, ox = (x + row * 4) % 8;
+        Rgb c = (y % 8 == 0 || ox == 0) ? Rgb{78, 76, 86} : Rgb{120, 118, 130};
+        if ((x == 4 || x == 11) && y > 2 && y < 13 && (y % 3 != 0)) c = {70, 210, 235}; // runy
+        p.put(TILE_ALTAR_SIDE, x, y, c, 5, 65);
+    });
+    p.fill(TILE_SKY_CRYSTAL_ORE, [&](int x, int y) {
+        Rgb c{196, 204, 214};
+        for (int s = 0; s < 4; ++s) {
+            float cx = 3.0f + rand01(s, 0, 66) * 10.0f, cy = 3.0f + rand01(s, 1, 66) * 10.0f;
+            if (std::abs(x - cx) + std::abs(y - cy) * 0.6f < 1.8f) c = {150, 245, 255};
+        }
+        p.put(TILE_SKY_CRYSTAL_ORE, x, y, c, 8, 67);
+    });
+
+    // --- Ikony predmetov (priehľadné pozadie) ---
+    auto icon = [&](Item item) { return itemIconTile(item); };
+    auto px = [&](int tile, int x, int y, Rgb c) {
+        if (x >= 0 && y >= 0 && x < TILE_SIZE && y < TILE_SIZE) p.put(tile, x, y, c, 0, 0);
+    };
+    auto disc = [&](int tile, float cx, float cy, float r, Rgb c, Rgb edge) {
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x) {
+                float d = std::hypot(x + 0.5f - cx, y + 0.5f - cy);
+                if (d < r) px(tile, x, y, d > r - 1.0f ? edge : c);
+            }
+    };
+    auto stamp = [&](int tile, float x, float y, Rgb c) { px(tile, (int)std::floor(x), (int)std::floor(y), c); };
+
+    // Nástroje: rukoväť šikmo zľava dole doprava hore, hlava podľa druhu, farba podľa materiálu.
+    const float dX = 0.7071f, dY = -0.7071f;   // smer rukoväte
+    const float nX = 0.7071f, nY = 0.7071f;    // kolmica
+    auto handle = [&](int tile, float from, float to, Rgb c) {
+        for (float s = from; s <= to; s += 0.25f) stamp(tile, 3.0f + dX * s, 12.5f + dY * s, c);
+    };
+    auto toolIcon = [&](Item item, ToolType type, Rgb mat) {
+        int t = icon(item);
+        Rgb dark{mat.r * 3 / 5, mat.g * 3 / 5, mat.b * 3 / 5};
+        const float topX = 3.0f + dX * 12.0f, topY = 12.5f + dY * 12.0f;
+        switch (type) {
+        case ToolType::Pickaxe:
+            handle(t, 0.0f, 11.5f, {120, 86, 48});
+            for (float u = -5.5f; u <= 5.5f; u += 0.2f) {
+                float bend = u * u * 0.09f;
+                for (float w = 0.0f; w <= 1.2f; w += 0.4f)
+                    stamp(t, topX + nX * u - dX * (bend + w), topY + nY * u - dY * (bend + w), w > 0.8f ? dark : mat);
+            }
+            break;
+        case ToolType::Axe:
+            handle(t, 0.0f, 11.5f, {120, 86, 48});
+            for (float s = -3.0f; s <= 1.0f; s += 0.25f)
+                for (float u = 0.0f; u <= 4.6f - std::abs(s + 1.0f) * 0.6f; u += 0.25f)
+                    stamp(t, topX + dX * s - nX * u, topY + dY * s - nY * u, u > 3.6f ? dark : mat);
+            break;
+        case ToolType::Shovel:
+            handle(t, 0.0f, 8.5f, {120, 86, 48});
+            for (float s = 8.0f; s <= 12.5f; s += 0.25f)
+                for (float u = -1.8f; u <= 1.8f; u += 0.25f)
+                    stamp(t, 3.0f + dX * s + nX * u, 12.5f + dY * s + nY * u, std::abs(u) > 1.4f ? dark : mat);
+            break;
+        default: // meč
+            handle(t, 0.0f, 3.0f, {90, 64, 36});
+            for (float u = -2.8f; u <= 2.8f; u += 0.25f) stamp(t, 3.0f + dX * 3.2f + nX * u, 12.5f + dY * 3.2f + nY * u, dark);
+            for (float s = 3.5f; s <= 13.0f; s += 0.25f)
+                for (float u = -0.9f; u <= 0.9f; u += 0.3f)
+                    stamp(t, 3.0f + dX * s + nX * u, 12.5f + dY * s + nY * u, u > 0.3f ? dark : mat);
+            break;
+        }
+    };
+    const Rgb WOOD{166, 128, 76}, STONEC{136, 136, 140}, IRON{220, 220, 226}, AETH{90, 236, 246};
+    toolIcon(Item::WoodPickaxe, ToolType::Pickaxe, WOOD);   toolIcon(Item::WoodAxe, ToolType::Axe, WOOD);
+    toolIcon(Item::WoodShovel, ToolType::Shovel, WOOD);     toolIcon(Item::WoodSword, ToolType::Sword, WOOD);
+    toolIcon(Item::StonePickaxe, ToolType::Pickaxe, STONEC); toolIcon(Item::StoneAxe, ToolType::Axe, STONEC);
+    toolIcon(Item::StoneShovel, ToolType::Shovel, STONEC);   toolIcon(Item::StoneSword, ToolType::Sword, STONEC);
+    toolIcon(Item::IronPickaxe, ToolType::Pickaxe, IRON);   toolIcon(Item::IronAxe, ToolType::Axe, IRON);
+    toolIcon(Item::IronShovel, ToolType::Shovel, IRON);     toolIcon(Item::IronSword, ToolType::Sword, IRON);
+    toolIcon(Item::AetheritePickaxe, ToolType::Pickaxe, AETH); toolIcon(Item::AetheriteSword, ToolType::Sword, AETH);
+
+    handle(icon(Item::Stick), 1.0f, 12.0f, {150, 112, 64});
+
+    // Uhlie: nepravidelná hrudka
+    disc(icon(Item::Coal), 8.0f, 8.5f, 5.0f, {44, 44, 48}, {24, 24, 26});
+    px(icon(Item::Coal), 6, 6, {90, 90, 96});
+    px(icon(Item::Coal), 9, 7, {80, 80, 86});
+
+    // Ingoty: lichobežníková tehlička
+    auto ingot = [&](Item item, Rgb c) {
+        int t = icon(item);
+        for (int y = 6; y <= 11; ++y)
+            for (int x = 2 + (11 - y) / 2; x <= 13 - (11 - y) / 2; ++x)
+                px(t, x, y, y == 6 ? Rgb{std::min(255, c.r + 40), std::min(255, c.g + 40), std::min(255, c.b + 40)}
+                            : (y == 11 ? Rgb{c.r * 2 / 3, c.g * 2 / 3, c.b * 2 / 3} : c));
+    };
+    ingot(Item::IronIngot, {200, 200, 206});
+    ingot(Item::GoldIngot, {246, 200, 60});
+
+    // Kryštály: kosoštvorec so žiarivým stredom
+    auto crystal = [&](Item item, Rgb c, Rgb light, float size) {
+        int t = icon(item);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x) {
+                float d = std::abs(x + 0.5f - 8.0f) / (size * 0.6f) + std::abs(y + 0.5f - 8.0f) / size;
+                if (d < 1.0f) px(t, x, y, d < 0.45f ? light : (x < 8 ? c : Rgb{c.r * 4 / 5, c.g * 4 / 5, c.b * 4 / 5}));
+            }
+    };
+    crystal(Item::AetheriteShard, {60, 200, 230}, {200, 255, 255}, 6.5f);
+    crystal(Item::SkyCrystal, {170, 230, 255}, {255, 255, 255}, 7.5f);
+    crystal(Item::ManaCrystal, {70, 110, 240}, {170, 200, 255}, 6.5f);
+
+    // Tieňová esencia: tmavofialová guľa s azúrovou iskrou
+    disc(icon(Item::ShadowEssence), 8.0f, 8.0f, 5.5f, {70, 30, 100}, {30, 10, 50});
+    disc(icon(Item::ShadowEssence), 7.0f, 7.0f, 2.0f, {120, 70, 170}, {120, 70, 170});
+    px(icon(Item::ShadowEssence), 9, 9, {100, 240, 255});
+
+    // Mäso a jablko
+    auto meat = [&](Item item, Rgb c, Rgb edge) {
+        int t = icon(item);
+        disc(t, 7.0f, 8.5f, 5.0f, c, edge);
+        for (int i = 0; i < 4; ++i) px(t, 11 + i / 2, 12 + i % 2, {236, 230, 216}); // kosť
+    };
+    meat(Item::RawMeat, {226, 110, 110}, {170, 60, 70});
+    meat(Item::CookedMeat, {156, 96, 52}, {100, 60, 30});
+    disc(icon(Item::Apple), 8.0f, 9.0f, 5.0f, {220, 40, 40}, {150, 20, 25});
+    px(icon(Item::Apple), 6, 7, {255, 140, 140});
+    px(icon(Item::Apple), 8, 3, {110, 70, 30});
+    px(icon(Item::Apple), 8, 4, {110, 70, 30});
+    px(icon(Item::Apple), 9, 3, {60, 160, 50});
+    px(icon(Item::Apple), 10, 3, {60, 160, 50});
+
+    // Čarovná palička a nebeská palica: rukoväť + zlatý krúžok + žiariaci kryštál
+    auto staff = [&](Item item, Rgb wood, Rgb gem, float gemSize) {
+        int t = icon(item);
+        handle(t, 0.0f, 9.5f, wood);
+        for (float u = -1.0f; u <= 1.0f; u += 0.5f) stamp(t, 3.0f + dX * 8.5f + nX * u, 12.5f + dY * 8.5f + nY * u, {250, 205, 70});
+        disc(t, 3.0f + dX * 11.5f, 12.5f + dY * 11.5f, gemSize, gem, {255, 255, 255});
+    };
+    staff(Item::Wand, {140, 100, 60}, {80, 230, 245}, 2.6f);
+    staff(Item::SkyStaff, {236, 230, 214}, {190, 240, 255}, 3.4f);
+
+    // Runy: kamenná doštička s farebným znakom
+    auto rune = [&](Item item, Rgb glyph, int kind) {
+        int t = icon(item);
+        for (int y = 2; y <= 13; ++y)
+            for (int x = 3; x <= 12; ++x) {
+                bool edge = x == 3 || x == 12 || y == 2 || y == 13;
+                px(t, x, y, edge ? Rgb{86, 86, 94} : Rgb{136, 136, 146});
+            }
+        switch (kind) {
+        case 0: // svetlo: slnko
+            disc(t, 8.0f, 8.0f, 2.5f, glyph, glyph);
+            for (int i = 0; i < 4; ++i) { px(t, 8, 3 + i * 0 + (i == 0 ? 1 : 0), glyph); }
+            px(t, 8, 4, glyph); px(t, 8, 12, glyph); px(t, 4, 8, glyph); px(t, 11, 8, glyph);
+            break;
+        case 1: // oheň: plameň
+            for (int y = 4; y <= 11; ++y)
+                for (int x = 8 - (y - 4) / 3; x <= 8 + (y - 4) / 3; ++x) px(t, x, y, y > 8 ? Rgb{255, 220, 80} : glyph);
+            break;
+        case 2: // skok: šípka
+            for (int x = 5; x <= 10; ++x) px(t, x, 8, glyph);
+            px(t, 9, 6, glyph); px(t, 10, 7, glyph); px(t, 10, 9, glyph); px(t, 9, 10, glyph);
+            break;
+        default: // levitácia: šípka hore
+            for (int y = 5; y <= 11; ++y) px(t, 8, y, glyph);
+            px(t, 6, 7, glyph); px(t, 7, 6, glyph); px(t, 9, 6, glyph); px(t, 10, 7, glyph);
+            break;
+        }
+    };
+    rune(Item::RuneLight, {255, 236, 120}, 0);
+    rune(Item::RuneFire, {255, 110, 40}, 1);
+    rune(Item::RuneBlink, {190, 110, 255}, 2);
+    rune(Item::RuneLevitation, {220, 250, 255}, 3);
+
     return img;
 }
 

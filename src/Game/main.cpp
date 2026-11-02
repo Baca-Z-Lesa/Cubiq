@@ -14,6 +14,7 @@
 #include "Game/BlockAtlas.h"
 #include "Game/BlockHighlight.h"
 #include "Game/DebugOverlay.h"
+#include "Game/DroppedItems.h"
 #include "Game/Entities.h"
 #include "Game/EntityRenderer.h"
 #include "Game/FarTerrain.h"
@@ -101,49 +102,77 @@ static void spawnPlayer(Player& player, Camera& camera, const TerrainGenerator& 
 
 static uint32_t randomSeed() { return std::random_device{}(); }
 
-// Kopanie a stavanie. Držaním tlačidla sa opakuje každých REPEAT sekúnd.
+// Kopanie a stavanie.
+// Survival: blok sa kope, kým sa drží tlačidlo – čas podľa tvrdosti a nástroja; vypadne predmet.
+// Kreatívny: blok zmizne hneď (držaním sa opakuje každých REPEAT sekúnd), stavanie neminie bloky.
 struct BlockInteraction {
     static constexpr float REACH = 6.0f;
     static constexpr float REPEAT = 0.22f;
     float breakCooldown = 0.0f;
     float placeCooldown = 0.0f;
+    glm::ivec3 target{0, -1, 0}; // práve kopaný blok
+    float progress = 0.0f;       // sekundy kopania
+    float needed = 1.0f;         // potrebný čas
+    std::mt19937 rng{std::random_device{}()};
 
-    void update(World& world, const Player& player, Inventory& inventory, const RaycastHit& hit, float dt)
+    float breakProgress() const { return needed > 0.0f ? std::clamp(progress / needed, 0.0f, 1.0f) : 0.0f; }
+
+    void update(World& world, const Player& player, Inventory& inventory, DroppedItems& drops, const RaycastHit& hit,
+                bool creative, float dt)
     {
         breakCooldown -= dt;
         placeCooldown -= dt;
 
-        bool breakNow = Input::wasMousePressed(GLFW_MOUSE_BUTTON_LEFT) ||
-                        (Input::isMouseDown(GLFW_MOUSE_BUTTON_LEFT) && breakCooldown <= 0.0f);
-        bool placeNow = Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT) ||
-                        (Input::isMouseDown(GLFW_MOUSE_BUTTON_RIGHT) && placeCooldown <= 0.0f);
+        const bool mining = Input::isMouseDown(GLFW_MOUSE_BUTTON_LEFT) && hit.hit && blockType(hit.id).breakable;
+        if (!mining || hit.block != target) progress = 0.0f;
 
-        if (breakNow && hit.hit && blockType(hit.id).breakable) {
-            world.setBlock(hit.block.x, hit.block.y, hit.block.z, BlockId::Air);
-            inventory.add(hit.id, 1);
-            breakCooldown = REPEAT;
+        if (creative) {
+            bool breakNow = Input::wasMousePressed(GLFW_MOUSE_BUTTON_LEFT) || breakCooldown <= 0.0f;
+            if (mining && breakNow) {
+                world.setBlock(hit.block.x, hit.block.y, hit.block.z, BlockId::Air);
+                breakCooldown = REPEAT;
+            }
+        } else if (mining) {
+            ItemStack& tool = inventory.selectedStack();
+            bool dropsItem = false;
+            target = hit.block;
+            needed = breakTime(hit.id, tool.empty() ? Item::Air : tool.id, dropsItem);
+            progress += dt;
+            if (needed >= 0.0f && progress >= needed && breakCooldown <= 0.0f) {
+                world.setBlock(hit.block.x, hit.block.y, hit.block.z, BlockId::Air);
+                Item drop = dropsItem ? dropOf(hit.id, std::uniform_real_distribution<float>(0.0f, 1.0f)(rng)) : Item::Air;
+                if (drop != Item::Air) drops.spawn(ItemStack::of(drop), glm::vec3(hit.block) + glm::vec3(0.5f));
+                const ToolType toolType = tool.empty() ? ToolType::None : itemInfo(tool.id).tool;
+                if (toolType != ToolType::None && toolType != ToolType::Magic && miningInfo(hit.id).hardness > 0.0f)
+                    inventory.damageSelected(toolType == ToolType::Sword ? 2 : 1);
+                progress = 0.0f;
+                breakCooldown = 0.12f; // krátka pauza medzi blokmi
+            }
         }
 
+        const bool placeNow = Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT) ||
+                              (Input::isMouseDown(GLFW_MOUSE_BUTTON_RIGHT) && placeCooldown <= 0.0f);
         if (placeNow && hit.hit) {
             ItemStack& stack = inventory.selectedStack();
             glm::ivec3 p = hit.block + hit.normal;
             BlockId current = world.getBlock(p.x, p.y, p.z);
             bool free = current == BlockId::Air || isLiquid(current);
             bool insidePlayer = AABB::block(p).intersects(player.bounds()); // nezamurovať sa
-            if (!stack.empty() && free && !insidePlayer && p.y >= 0 && p.y < Chunk::SIZE_Y) {
-                world.setBlock(p.x, p.y, p.z, stack.id);
-                if (--stack.count == 0) stack.clear();
+            if (!stack.empty() && isBlockItem(stack.id) && free && !insidePlayer && p.y >= 0 && p.y < Chunk::SIZE_Y) {
+                world.setBlock(p.x, p.y, p.z, blockOf(stack.id));
+                if (!creative && --stack.count == 0) stack.clear();
                 placeCooldown = REPEAT;
             }
         }
     }
 };
 
-static void giveStarterItems(Inventory& inventory)
+static void giveStarterItems(Inventory& inventory, bool creative)
 {
+    if (!creative) return; // survival začína s prázdnymi rukami
     const BlockId starter[] = {BlockId::Grass, BlockId::Stone, BlockId::OakPlanks, BlockId::OakLog, BlockId::StoneBricks,
                                BlockId::Glass, BlockId::Lantern, BlockId::CherryLeaves, BlockId::AetheriteOre};
-    for (BlockId id : starter) inventory.add(id, Inventory::MAX_STACK);
+    for (BlockId id : starter) inventory.add(itemOf(id), Inventory::MAX_STACK);
 }
 
 // ------------------------------------------------------------------ kreslenie sveta
@@ -157,13 +186,15 @@ struct WorldRenderer {
     bool farTerrain = true; // L = zapnúť/vypnúť vzdialený terén
     VisibleSections visible;
     EntityRenderer mobRenderer;
+    DroppedItemRenderer itemRenderer;
     int facesDrawn = 0; // pre F3
 
     // Dosah vzdialeného terénu: 6× dohľad chunkov (aspoň 512, najviac 1536 blokov).
     static float farRadiusFor(float nearRadius) { return std::clamp(nearRadius * 6.0f, 512.0f, 1536.0f); }
 
     void draw(GameWorld& game, const Camera& camera, float aspect, const SkyState& s, float animTime,
-              const RaycastHit* hit, const Texture& atlas, const EntityManager* entities)
+              const RaycastHit* hit, const Texture& atlas, const EntityManager* entities,
+              const DroppedItems* drops = nullptr, float breakProgress = 0.0f)
     {
         const glm::vec3 WATER_FOG_COLOR(0.08f, 0.22f, 0.45f);
         ChunkManager& chunks = game.chunks;
@@ -243,6 +274,8 @@ struct WorldRenderer {
 
         // 1b) Zvieratá
         if (entities) mobRenderer.draw(*entities, game.world, projection * view, camera.position, s, fogColor, fogStart, fogEnd);
+        if (drops)
+            itemRenderer.draw(*drops, game.world, projection * view, camera.position, s, fogColor, fogStart, fogEnd, atlas);
 
         // 2) Mraky nad kamerou alebo okolo nej – až po teréne, aby zakryli zem pod sebou.
         if (!underwater && !cloudsBehindTerrain)
@@ -273,7 +306,7 @@ struct WorldRenderer {
         glDisable(GL_BLEND);
 
         // 4) Obrys bloku pod zameriavačom
-        if (hit && hit->hit) highlight.draw(hit->block, projection * view);
+        if (hit && hit->hit) highlight.draw(hit->block, projection * view, breakProgress);
     }
 };
 
@@ -291,8 +324,11 @@ struct Session {
     bool inventoryOpen = false;
     BlockInteraction interaction;
     EntityManager entities; // zvieratá sa neukladajú, objavujú sa znova podľa biómu
+    DroppedItems drops;     // predmety na zemi sa tiež neukladajú
     double worldTime = 0.08;
     float autosaveTimer = 0.0f;
+
+    bool creative() const { return info.creative; }
 
     void save()
     {
@@ -304,7 +340,7 @@ struct Session {
         info.flying = player.flying;
         info.time = worldTime;
         info.inventory = inventory;
-        if (!held.empty()) info.inventory.add(held.id, held.count);
+        if (!held.empty()) info.inventory.add(held);
         info.lastPlayed = nowUnix();
         saveWorldInfo(info);
         game->chunks.saveAll();
@@ -324,14 +360,14 @@ static std::unique_ptr<Session> startSession(const WorldInfo& info, bool persist
 
     if (info.hasPlayer) {
         s->player.teleport(info.position);
-        s->player.flying = info.flying;
+        s->player.flying = info.flying && info.creative;
         s->camera.yaw = info.yaw;
         s->camera.pitch = info.pitch;
         s->camera.position = s->player.eyePosition();
         s->inventory = info.inventory;
     } else {
         spawnPlayer(s->player, s->camera, s->game->generator, startAt);
-        giveStarterItems(s->inventory);
+        giveStarterItems(s->inventory, info.creative);
     }
     return s;
 }
@@ -353,7 +389,7 @@ struct MenuBackground {
     }
 };
 
-static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
+static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickSurvival)
 {
     Window window(1280, 720, "Cubiq");
 
@@ -378,6 +414,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
     float worldScroll = 0.0f;
     bool confirmDelete = false;
     std::string newName = "Novy svet", newSeed;
+    bool newCreative = false;
     int focusedField = 0;
     std::string statusMessage;
     float statusTimer = 0.0f;
@@ -387,6 +424,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
         WorldInfo quick;
         quick.name = "Rychla hra";
         quick.seed = *quickSeed;
+        quick.creative = !quickSurvival;
         session = startSession(quick, false, renderDistance, startAt);
         screen = Screen::Game;
         window.setCursorLocked(true);
@@ -415,7 +453,12 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
         Session& s = *session;
         s.inventoryOpen = open;
         if (!open && !s.held.empty()) { // čo ostalo v ruke, vráť späť
-            s.inventory.add(s.held.id, s.held.count);
+            int left = s.inventory.add(s.held);
+            if (left > 0) { // nezmestí sa → vyhodiť pred hráča
+                ItemStack rest = s.held;
+                rest.count = left;
+                s.drops.spawn(rest, s.camera.position, s.camera.forward() * 4.0f);
+            }
             s.held.clear();
         }
         window.setCursorLocked(!open);
@@ -480,7 +523,16 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                 if (Input::wasKeyPressed(GLFW_KEY_KP_SUBTRACT) || Input::wasKeyPressed(GLFW_KEY_MINUS))
                     chunks.setRenderDistance(renderDistance = std::max(renderDistance - 2, 2));
                 if (Input::wasKeyPressed(GLFW_KEY_T)) s.worldTime += 1.0 / 12.0;
-                if (Input::wasKeyPressed(GLFW_KEY_F)) s.player.toggleFlying();
+                if (Input::wasKeyPressed(GLFW_KEY_F) && s.creative()) s.player.toggleFlying();
+                // Q = vyhodiť jeden kus z ruky (s Ctrl celý stack).
+                if (Input::wasKeyPressed(GLFW_KEY_Q) && !s.inventoryOpen && !s.inventory.selectedStack().empty()) {
+                    ItemStack& sel = s.inventory.selectedStack();
+                    ItemStack thrown = sel;
+                    thrown.count = Input::isKeyDown(GLFW_KEY_LEFT_CONTROL) ? sel.count : 1;
+                    sel.count -= thrown.count;
+                    if (sel.count <= 0) sel.clear();
+                    s.drops.spawn(thrown, s.camera.position - glm::vec3(0.0f, 0.3f, 0.0f), s.camera.forward() * 5.0f);
+                }
 
                 for (int i = 0; i < Inventory::HOTBAR; ++i)
                     if (Input::wasKeyPressed(GLFW_KEY_1 + i)) s.inventory.select(i);
@@ -521,14 +573,26 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
             chunks.update(s.player.position);
             updateMs += (glfwGetTime() - tUpdate0) * 1000.0;
 
-            if (running) s.entities.update(g.world, g.generator, s.player.position, dt);
+            if (running) {
+                s.entities.update(g.world, g.generator, s.player.position, dt);
+                s.drops.update(g.world, s.inventory, s.player.position + glm::vec3(0.0f, 0.8f, 0.0f), dt);
+            }
 
             hit = raycast(g.world, s.camera.position, s.camera.forward(), BlockInteraction::REACH);
             if (screen == Screen::Game) {
                 if (s.inventoryOpen) {
-                    if (clicked) {
-                        int slot = hud.slotAt(window.width(), window.height(), Input::mousePosition());
-                        if (slot >= 0) s.inventory.clickSlot(slot, s.held);
+                    const bool rightClick = Input::wasMousePressed(GLFW_MOUSE_BUTTON_RIGHT);
+                    if (clicked || rightClick) {
+                        const glm::vec2 mouse = Input::mousePosition();
+                        int slot = hud.slotAt(window.width(), window.height(), mouse, s.creative());
+                        Item fromCatalog = s.creative() ? hud.catalogAt(window.width(), window.height(), mouse) : Item::Air;
+                        if (slot >= 0) {
+                            clickStack(s.inventory.slot(slot), s.held, rightClick);
+                        } else if (fromCatalog != Item::Air) {
+                            // Kreatívny katalóg: ľavé = plný stack, pravé = 1 kus; s predmetom v ruke ho zahodí.
+                            if (s.held.empty()) s.held = ItemStack::of(fromCatalog, rightClick ? 1 : itemInfo(fromCatalog).maxStack);
+                            else s.held.clear();
+                        }
                     }
                 } else if (window.isCursorLocked() && !clickConsumed) {
                     // Úder do zvieraťa má prednosť pred blokom, ak je bližšie.
@@ -538,7 +602,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                         s.entities.hit(mob, s.camera.forward());
                         s.interaction.breakCooldown = BlockInteraction::REPEAT; // tento klik nekope
                     } else {
-                        s.interaction.update(g.world, s.player, s.inventory, hit, dt);
+                        s.interaction.update(g.world, s.player, s.inventory, s.drops, hit, s.creative(), dt);
                     }
                 }
             }
@@ -558,7 +622,8 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
         if (inGame) {
             Session& s = *session;
             renderer.draw(*s.game, s.camera, window.aspect(), sky, animTime,
-                          (screen == Screen::Game && !s.inventoryOpen) ? &hit : nullptr, atlas, &s.entities);
+                          (screen == Screen::Game && !s.inventoryOpen) ? &hit : nullptr, atlas, &s.entities, &s.drops,
+                          s.interaction.breakProgress());
         } else {
             renderer.draw(*background->game, background->camera, window.aspect(), sky, animTime, nullptr, atlas, nullptr);
         }
@@ -572,7 +637,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
 
         if (inGame) {
             Session& s = *session;
-            hud.draw(ui, s.inventory, s.inventoryOpen, s.held, Input::mousePosition());
+            hud.draw(ui, s.inventory, s.inventoryOpen, s.held, Input::mousePosition(), s.creative());
 
             if (!worldReadyAt(s.game->world, s.player.position)) {
                 gui.dim(0.65f);
@@ -635,7 +700,8 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                     hit.hit ? fmt("Ciel: %s @ %d %d %d", blockType(hit.id).name, hit.block.x, hit.block.y, hit.block.z)
                             : std::string("Ciel: -"),
                     "",
-                    fmt("Svet: %s   seed %u", s.info.name.c_str(), g.generator.seed()),
+                    fmt("Svet: %s   seed %u   mod: %s", s.info.name.c_str(), g.generator.seed(), s.creative() ? "kreativny" : "survival"),
+                    fmt("Predmety na zemi: %zu", s.drops.items().size()),
                     fmt("Chunky: %zu nacitanych, %zu v rade, dohlad %d", g.world.chunkCount(), g.chunks.pendingCount(), g.chunks.renderDistance()),
                     fmt("Steny: %d, kreslenych %d (%.0f%%)", shownFaces, renderer.facesDrawn,
                         shownFaces ? 100.0 * renderer.facesDrawn / shownFaces : 0.0),
@@ -746,11 +812,18 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
             if (gui.textField(newSeed, "nahodny", x, y, fw, fh, focusedField == 1, 32)) focusedField = 1;
             if (Input::wasKeyPressed(GLFW_KEY_TAB)) focusedField = 1 - focusedField;
 
-            y += fh + 26.0f * S;
+            y += fh + 22.0f * S;
+            gui.text("Herny mod", x, y - 11.0f * S, S, GRAY, false);
+            if (gui.button(newCreative ? "Mod: Kreativny" : "Mod: Survival", x, y, fw, bh)) newCreative = !newCreative;
+            gui.text(newCreative ? "nekonecne bloky, let (F), okamzite kopanie"
+                                 : "zivoty, hlad, nastroje, crafting a magia",
+                     W * 0.5f, y + bh + 4.0f * S, S, GRAY, true);
+
+            y += bh + 26.0f * S;
             const float sbw = (fw - gap) * 0.5f;
             bool create = gui.button("Vytvorit svet", x, y, sbw, bh) || Input::wasKeyPressed(GLFW_KEY_ENTER);
             if (create) {
-                WorldInfo w = createWorld(newName, seedFromText(newSeed));
+                WorldInfo w = createWorld(newName, seedFromText(newSeed), newCreative);
                 enterWorld(w);
             } else if (gui.button("Zrusit", x + fw - sbw, y, sbw, bh) || Input::wasKeyPressed(GLFW_KEY_ESCAPE)) {
                 worlds = listWorlds();
@@ -806,16 +879,18 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
 }
 
 // Cubiq.exe              – hlavné menu
-// Cubiq.exe seed [x z]   – rýchla hra bez ukladania (x z = miesto spawnu)
+// Cubiq.exe seed [x z] [survival] – rýchla hra bez ukladania (x z = miesto spawnu), predvolene kreatívna
 int main(int argc, char** argv)
 {
     try {
         uint32_t seed = 0;
         glm::ivec2 start;
+        bool survival = argc > 1 && std::string(argv[argc - 1]) == "survival";
+        if (survival) --argc;
         bool hasSeed = argc > 1, hasStart = argc > 3;
         if (hasSeed) seed = (uint32_t)std::strtoul(argv[1], nullptr, 10);
         if (hasStart) start = {std::atoi(argv[2]), std::atoi(argv[3])};
-        return run(hasSeed ? &seed : nullptr, hasStart ? &start : nullptr);
+        return run(hasSeed ? &seed : nullptr, hasStart ? &start : nullptr, survival);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "Chyba: %s\n", e.what());
 #ifdef _WIN32
