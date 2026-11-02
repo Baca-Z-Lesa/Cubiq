@@ -18,7 +18,7 @@ namespace {
 
     std::vector<MobInfo> buildInfos()
     {
-        std::vector<MobInfo> v(3);
+        std::vector<MobInfo> v(4);
         // Jeleň: štíhle telo, dlhé nohy, krk, parohy.
         const glm::vec3 BROWN(0.55f, 0.38f, 0.22f), BELLY(0.78f, 0.66f, 0.50f), DARK(0.28f, 0.20f, 0.13f), ANTLER(0.86f, 0.80f, 0.66f);
         v[0] = {"Jelen", 0.7f, 1.6f, 1.7f, 6.5f, 6, true, false, {
@@ -58,6 +58,19 @@ namespace {
             {{0.22f, 0.07f, -0.16f}, {0.16f, 0.12f, 0.24f}, GREEN, 1},       // zadné nohy
             {{-0.22f, 0.07f, -0.16f}, {0.16f, 0.12f, 0.24f}, GREEN, 1},
         }};
+        // Mátoha: vznášajúca sa postava v kapucni, tmavý háv, žiariace azúrové oči.
+        const glm::vec3 ROBE(0.17f, 0.13f, 0.24f), SHADE(0.09f, 0.07f, 0.13f), VOID(0.02f, 0.02f, 0.03f), GLOW(0.45f, 0.95f, 1.0f);
+        v[3] = {"Matoha", 0.6f, 2.0f, 2.0f, 3.9f, 12, false, false, {
+            {{0.0f, 0.62f, 0.0f}, {0.66f, 0.62f, 0.56f}, SHADE, 0},          // spodok hávu
+            {{0.0f, 0.22f, -0.05f}, {0.42f, 0.3f, 0.36f}, VOID, 0},          // roztrhaný koniec
+            {{0.0f, 1.25f, 0.0f}, {0.58f, 0.68f, 0.44f}, ROBE, 0},           // trup
+            {{0.0f, 1.84f, 0.02f}, {0.5f, 0.5f, 0.5f}, ROBE, 2},             // kapucňa
+            {{0.0f, 1.8f, 0.255f}, {0.36f, 0.3f, 0.02f}, VOID, 2},           // tma pod kapucňou
+            {{0.09f, 1.84f, 0.27f}, {0.08f, 0.06f, 0.02f}, GLOW, 3},         // oči
+            {{-0.09f, 1.84f, 0.27f}, {0.08f, 0.06f, 0.02f}, GLOW, 3},
+            {{0.37f, 1.22f, 0.12f}, {0.14f, 0.62f, 0.14f}, SHADE, 1},        // ruky
+            {{-0.37f, 1.22f, 0.12f}, {0.14f, 0.62f, 0.14f}, SHADE, -1},
+        }, true};
         return v;
     }
 }
@@ -79,7 +92,7 @@ AABB Mob::bounds() const
 
 void EntityManager::trySpawn(const World& world, const TerrainGenerator& gen, const glm::vec3& player)
 {
-    if ((int)m_mobs.size() >= MAX_MOBS) return;
+    if ((int)m_mobs.size() - hostileCount() >= MAX_MOBS - MAX_HOSTILE) return;
     std::uniform_real_distribution<float> angle(0.0f, 6.2832f), dist(24.0f, 64.0f), unit(0.0f, 1.0f);
 
     float a = angle(m_rng), r = dist(m_rng);
@@ -135,6 +148,68 @@ void EntityManager::trySpawn(const World& world, const TerrainGenerator& gen, co
     }
 }
 
+bool EntityManager::covered(const World& world, const glm::vec3& pos)
+{
+    const glm::ivec3 b = blockOf(pos);
+    for (int y = b.y + 2; y < b.y + 40 && y < Chunk::SIZE_Y; ++y)
+        if (isOpaque(world.getBlock(b.x, y, b.z))) return true;
+    return false;
+}
+
+int EntityManager::hostileCount() const
+{
+    return (int)std::count_if(m_mobs.begin(), m_mobs.end(), [](const Mob& m) { return mobInfo(m.type).hostile; });
+}
+
+float EntityManager::takePlayerDamage(glm::vec3& fromDir)
+{
+    float d = m_playerDamage;
+    fromDir = m_damageDir;
+    m_playerDamage = 0.0f;
+    return d;
+}
+
+// Mátohy: v noci na povrchu, v jaskyniach (pod strechou zo skál) kedykoľvek.
+void EntityManager::trySpawnHostile(const World& world, const glm::vec3& player, bool night)
+{
+    if (hostileCount() >= MAX_HOSTILE) return;
+    std::uniform_real_distribution<float> angle(0.0f, 6.2832f), dist(18.0f, 40.0f), unit(0.0f, 1.0f);
+    float a = angle(m_rng), r = dist(m_rng);
+    int x = (int)std::floor(player.x + std::cos(a) * r), z = (int)std::floor(player.z + std::sin(a) * r);
+    const Chunk* chunk = world.getChunk(World::chunkCoordOf(x, z));
+    if (!chunk || !chunk->mesh) return;
+
+    Pathfinder::Options opt;
+    opt.height = 2;
+    glm::ivec3 feet(0, -1, 0);
+    if (night && unit(m_rng) < 0.6f) {
+        // povrch
+        int y = chunk->maxY();
+        while (y > 0 && !isSolid(world.getBlock(x, y, z))) --y;
+        if (isCutout(world.getBlock(x, y, z)) || isLiquid(world.getBlock(x, y + 1, z))) return;
+        feet = {x, y + 1, z};
+    } else {
+        // jaskyňa: náhodná výška okolo hráča, hľadáme vzduch nad pevnou zemou a skalu nad hlavou
+        int top = std::min((int)player.y + 16, chunk->maxY());
+        int y = 6 + (int)(unit(m_rng) * std::max(1, top - 6));
+        for (int i = 0; i < 24 && y > 2; ++i, --y)
+            if (Pathfinder::standable(world, {x, y, z}, opt)) { feet = {x, y, z}; break; }
+        if (feet.y < 0 || !covered(world, glm::vec3(feet))) return;
+    }
+    if (!Pathfinder::standable(world, feet, opt)) return;
+    if (glm::length(glm::vec3(feet) - player) < 16.0f) return;
+
+    Mob m;
+    m.id = m_nextId++;
+    m.type = MobType::Wraith;
+    m.position = glm::vec3(feet.x + 0.5f, (float)feet.y, feet.z + 0.5f);
+    m.yaw = angle(m_rng);
+    m.health = mobInfo(m.type).health;
+    m.herd = m.id;
+    m.stateTimer = unit(m_rng) * 2.0f;
+    m_mobs.push_back(m);
+}
+
 // ------------------------------------------------------------------ AI
 
 bool EntityManager::planTo(Mob& m, const World& world, glm::ivec3 goal)
@@ -153,6 +228,29 @@ void EntityManager::think(Mob& m, const World& world, const glm::vec3& player, f
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     m.stateTimer -= dt;
     m.repathTimer -= dt;
+    m.attackCooldown -= dt;
+
+    // Mátoha: hráča v dosahu naháňa (A* priebežne k nemu), zblízka útočí.
+    if (info.hostile) {
+        const glm::vec3 toPlayer = player - m.position;
+        const float dist = glm::length(toPlayer);
+        if (dist < 28.0f) {
+            if (m.state != Mob::State::Chase) m.repathTimer = 0.0f;
+            m.state = Mob::State::Chase;
+            if (m.repathTimer <= 0.0f) {
+                planTo(m, world, blockOf(player + glm::vec3(0.0f, 0.1f, 0.0f)));
+                m.repathTimer = 0.7f + unit(m_rng) * 0.3f;
+            }
+            const float flat = glm::length(glm::vec2(toPlayer.x, toPlayer.z));
+            if (flat < 1.4f && std::abs(toPlayer.y) < 1.8f && m.attackCooldown <= 0.0f) {
+                m_playerDamage += 3.0f;
+                m_damageDir = glm::normalize(glm::vec3(toPlayer.x, 0.0f, toPlayer.z) + glm::vec3(0.0001f));
+                m.attackCooldown = 1.1f;
+            }
+            return;
+        }
+        if (m.state == Mob::State::Chase) { m.state = Mob::State::Idle; m.path.clear(); }
+    }
 
     glm::vec3 away = m.position - player;
     away.y = 0.0f;
@@ -248,9 +346,17 @@ void EntityManager::followPath(Mob& m, const World& world, float speed)
     (void)world;
 }
 
-void EntityManager::update(const World& world, const TerrainGenerator& gen, const glm::vec3& player, float dt)
+void EntityManager::update(const World& world, const TerrainGenerator& gen, const glm::vec3& player, float dt,
+                           bool night, bool hostiles)
 {
     dt = std::min(dt, 0.05f);
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+
+    m_hostileTimer -= dt;
+    if (hostiles && m_hostileTimer <= 0.0f) {
+        trySpawnHostile(world, player, night);
+        m_hostileTimer = 2.5f; // postupne, nie celá horda naraz
+    }
 
     m_spawnTimer -= dt;
     if (m_spawnTimer <= 0.0f) {
@@ -264,8 +370,24 @@ void EntityManager::update(const World& world, const TerrainGenerator& gen, cons
 
         const MobInfo& info = mobInfo(m.type);
         think(m, world, player, dt);
-        float speed = m.state == Mob::State::Flee ? info.fleeSpeed : m.state == Mob::State::Wander ? info.walkSpeed : 0.0f;
+        float speed = (m.state == Mob::State::Flee || m.state == Mob::State::Chase) ? info.fleeSpeed
+                    : m.state == Mob::State::Wander ? info.walkSpeed : 0.0f;
         followPath(m, world, speed);
+        if (m.state == Mob::State::Chase) {
+            // Zblízka rovno k hráčovi (cesta po blokoch by sa zasekávala).
+            glm::vec2 to(player.x - m.position.x, player.z - m.position.z);
+            float d = glm::length(to);
+            if (d < 2.5f && d > 0.6f) {
+                m.velocity.x = to.x / d * speed;
+                m.velocity.z = to.y / d * speed;
+                m.yaw = std::atan2(to.x, to.y);
+            } else if (d <= 0.6f) {
+                m.velocity.x *= 0.5f;
+                m.velocity.z *= 0.5f;
+            }
+        }
+        // Cez deň mátohy na povrchu postupne zmiznú.
+        if (info.hostile && !night && unit(m_rng) < dt * 0.4f && !covered(world, m.position)) m.health = 0;
 
         // Fyzika (rovnaká ako u hráča)
         bool inWater = touchesLiquid(world, m.bounds());
@@ -329,6 +451,11 @@ bool EntityManager::hit(int index, const glm::vec3& fromDir, int damage)
     m.hurtTimer = 0.35f;
     glm::vec3 push = glm::normalize(glm::vec3(fromDir.x, 0.0f, fromDir.z) + glm::vec3(0.0001f));
     m.velocity = push * 7.0f + glm::vec3(0.0f, 6.0f, 0.0f);
+    if (mobInfo(m.type).hostile) { // mátoha sa nezľakne, len ju to odhodí
+        m.velocity = push * 5.0f + glm::vec3(0.0f, 4.0f, 0.0f);
+        m.attackCooldown = std::max(m.attackCooldown, 0.4f);
+        return m.health <= 0;
+    }
     m.state = Mob::State::Flee;
     m.stateTimer = 8.0f;
     m.repathTimer = 0.2f;

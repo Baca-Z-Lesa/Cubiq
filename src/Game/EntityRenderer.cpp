@@ -71,7 +71,9 @@ void EntityRenderer::draw(const EntityManager& entities, const World& world, con
         m_shader.setVec3("uLight", glm::max(skyLight, glm::vec3(0.06f)));
         m_shader.setFloat("uHurt", m.hurtTimer > 0.0f ? 1.0f : 0.0f);
 
-        glm::mat4 base = glm::translate(glm::mat4(1.0f), m.position);
+        // Mátoha sa jemne vznáša.
+        const float hover = info.hostile ? 0.12f + 0.08f * std::sin(m.walkPhase * 0.7f + m.id * 1.7f) : 0.0f;
+        glm::mat4 base = glm::translate(glm::mat4(1.0f), m.position + glm::vec3(0.0f, hover, 0.0f));
         base = glm::rotate(base, m.yaw, glm::vec3(0, 1, 0));
         const float swing = std::sin(m.walkPhase) * 0.7f;
 
@@ -94,6 +96,7 @@ void EntityRenderer::draw(const EntityManager& entities, const World& world, con
             model = glm::scale(model, part.size);
             m_shader.setMat4("uModel", model);
             m_shader.setVec3("uColor", part.color);
+            m_shader.setFloat("uEmissive", part.swing == 3 ? 1.0f : 0.0f);
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
     }

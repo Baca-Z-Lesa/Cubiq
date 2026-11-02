@@ -715,7 +715,13 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
             updateMs += (glfwGetTime() - tUpdate0) * 1000.0;
 
             if (running) {
-                s.entities.update(g.world, g.generator, s.player.position, dt);
+                const float dayPart = (float)(s.worldTime - std::floor(s.worldTime));
+                const bool night = computeSky(dayPart).sunBrightness < 0.4f;
+                s.entities.update(g.world, g.generator, s.player.position, dt, night, !s.creative());
+                glm::vec3 hitDir;
+                if (float dmg = s.entities.takePlayerDamage(hitDir); dmg > 0.0f && !s.creative() && !s.vitals.dead()) {
+                    if (s.vitals.damage(dmg, "matoha")) s.player.velocity += hitDir * 7.0f + glm::vec3(0.0f, 4.5f, 0.0f);
+                }
                 s.drops.update(g.world, s.inventory, s.player.position + glm::vec3(0.0f, 0.8f, 0.0f), dt);
                 s.furnaces.update(g.world, s.drops, dt);
                 // Stôl / pec zničená alebo hráč odišiel ďaleko → zavrieť.
@@ -803,6 +809,9 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                             int meat = victim.type == MobType::Deer ? 2 + (victim.id & 1)
                                      : victim.type == MobType::Sheep ? 1 + (victim.id & 1) : 0;
                             if (meat > 0) s.drops.spawn(ItemStack::of(Item::RawMeat, meat), victim.position + glm::vec3(0.0f, 0.5f, 0.0f));
+                            // Mátoha: tieňová esencia (na runy) 1–2.
+                            if (victim.type == MobType::Wraith)
+                                s.drops.spawn(ItemStack::of(Item::ShadowEssence, 1 + (victim.id % 2)), victim.position + glm::vec3(0.0f, 1.0f, 0.0f));
                         }
                         if (!weapon.empty() && itemInfo(weapon.id).tool == ToolType::Sword && !s.creative())
                             s.inventory.damageSelected(1);
@@ -948,7 +957,8 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt, bool quickS
                     fmt("Steny: %d, kreslenych %d (%.0f%%)", shownFaces, renderer.facesDrawn,
                         shownFaces ? 100.0 * renderer.facesDrawn / shownFaces : 0.0),
                     fmt("Viditelne sekcie: %d   mesh %.2f ms/chunk", renderer.visible.visibleCount(), g.chunks.meshMsAverage()),
-                    fmt("Zvierata: %zu / %d", s.entities.mobs().size(), EntityManager::MAX_MOBS),
+                    fmt("Zvierata: %zu / %d   matohy: %d / %d", s.entities.mobs().size() - s.entities.hostileCount(),
+                        EntityManager::MAX_MOBS - EntityManager::MAX_HOSTILE, s.entities.hostileCount(), EntityManager::MAX_HOSTILE),
                     renderer.farTerrain ? fmt("Vzdialeny teren: %d/%zu dlazdic do %.0f blokov (L)", g.distant.drawnTiles(), g.distant.tileCount(),
                                               WorldRenderer::farRadiusFor((float)(g.chunks.renderDistance() * Chunk::SIZE_X)))
                                         : std::string("Vzdialeny teren: vypnuty (L)"),
