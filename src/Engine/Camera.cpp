@@ -26,7 +26,7 @@ glm::mat4 Camera::view() const { return glm::lookAt(position, position + forward
 
 glm::mat4 Camera::projection(float aspect) const
 {
-    return glm::perspective(glm::radians(fov), aspect, 0.05f, 1000.0f);
+    return glm::perspective(glm::radians(fov), aspect, 0.05f, 2500.0f); // ďaleko kvôli vzdialenému terénu
 }
 
 } // namespace cubiq

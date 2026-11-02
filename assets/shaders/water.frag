@@ -1,5 +1,6 @@
 #version 330 core
 in vec2 vUV;
+flat in float vTile;
 in float vShade;
 in vec4 vLight;
 in vec3 vWorldPos;
@@ -7,6 +8,7 @@ in float vDistance;
 flat in int vLava;
 
 uniform sampler2D uAtlas;
+uniform float uAtlasTiles;
 uniform vec3 uCameraPos;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
@@ -22,7 +24,9 @@ out vec4 FragColor;
 
 void main()
 {
-    vec4 tex = texture(uAtlas, vUV);
+    // UV v blokoch → súradnica v atlase (textúra sa opakuje po zlúčených stenách)
+    vec2 f = clamp(fract(vUV), 0.5 / 16.0, 1.0 - 0.5 / 16.0);
+    vec4 tex = texture(uAtlas, vec2((vTile + f.x) / uAtlasTiles, f.y));
     vec3 sun = uSunColor * vLight.x * uSunBrightness;
     vec3 light = max(sun, vLight.yzw);
     float fog = clamp((vDistance - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);

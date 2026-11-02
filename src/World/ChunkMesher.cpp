@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace cubiq {
 
@@ -193,8 +194,33 @@ MeshInput snapshotChunk(const World& world, const Chunk& chunk)
     return in;
 }
 
+namespace {
+    // Všetko, čo musí byť rovnaké, aby sa dve susedné steny dali zlúčiť do jednej.
+    // Len bajty bez výplne → porovnanie cez memcmp.
+    struct FaceKey {
+        uint8_t valid;
+        uint8_t tile;
+        uint8_t liquid;    // 1 = ide do mesha tekutín
+        uint8_t surface;   // 1 = hladina (o kúsok nižšie)
+        uint8_t ao[4];
+        uint8_t tint[3];   // farba biómu × TINT_STEPS
+        uint8_t light[16]; // 4 rohy × (slnko, R, G, B) × LIGHT_STEPS
+
+        bool operator==(const FaceKey& o) const { return std::memcmp(this, &o, sizeof(FaceKey)) == 0; }
+    };
+    static_assert(sizeof(FaceKey) == 27, "FaceKey musí byť bez výplne");
+
+    // Hrubšie kroky farby a svetla = viac zhodných susedných stien = väčšie zlúčenia.
+    // 48 krokov svetla a 40 krokov farby trávy oko na plynulom prechode nerozozná.
+    constexpr float LIGHT_STEPS = 48.0f;
+    constexpr float TINT_STEPS = 40.0f;
+
+    uint8_t quantize(float v, float scale) { return (uint8_t)std::clamp((int)std::lround(v * scale), 0, 255); }
+}
+
 ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
 {
+    (void)atlasTiles; // UV sa teraz počítajú v shaderi z indexu dlaždice
     ChunkMeshData data;
     const LightGrid light = computeLight(in);
 
@@ -205,94 +231,146 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
         int i = MeshInput::index(p.x, p.y, p.z);
         return {light.sky[i], light.r[i], light.g[i], light.b[i]};
     };
+    auto curve = [](float level) {
+        int lo = (int)level;
+        float t = level - lo;
+        return CURVE.v[lo] * (1.0f - t) + CURVE.v[std::min(lo + 1, 15)] * t;
+    };
 
-    for (int y = 0; y <= in.maxY; ++y) {
-        for (int z = 0; z < Chunk::SIZE_Z; ++z) {
-            for (int x = 0; x < Chunk::SIZE_X; ++x) {
-                BlockId id = in.at(x, y, z);
-                if (id == BlockId::Air) continue;
-                const BlockType& type = blockType(id);
-                const bool liquid = type.liquid;
-                MeshData& out = liquid ? data.liquid : data.opaque;
+    // Stena bloku (x,y,z) v smere face: viditeľná? s akou textúrou, tieňmi a svetlom v rohoch?
+    auto faceKey = [&](int x, int y, int z, const FaceDef& face) {
+        FaceKey k{};
+        BlockId id = in.at(x, y, z);
+        if (id == BlockId::Air) return k;
+        const BlockType& type = blockType(id);
+        const bool liquid = type.liquid;
 
-                // Hladina je o kúsok nižšie ako plný blok (len keď nad ňou nie je ďalšia tekutina).
-                const bool surface = liquid && in.at(x, y + 1, z) != id;
-                const float topHeight = surface ? 0.875f : 1.0f;
-                // Tekutiny tint nepotrebujú – shader vody z neho spozná lávu (x > 1.5).
-                const glm::vec3 tint = !liquid             ? in.tints[z * Chunk::SIZE_X + x]
-                                     : id == BlockId::Lava ? glm::vec3(2.0f)
-                                                           : glm::vec3(1.0f);
-                // Svietiace bloky majú steny osvetlené aspoň vlastným svetlom.
-                const glm::vec3 selfGlow(CURVE.v[type.lightR], CURVE.v[type.lightG], CURVE.v[type.lightB]);
-                const bool glows = type.lightR | type.lightG | type.lightB;
+        glm::ivec3 n = glm::ivec3(x, y, z) + face.normal;
+        BlockId nb = in.at(n.x, n.y, n.z);
+        // Pevný blok: stena je vidno cez vzduch, vodu aj listy.
+        // Voda a listy: stena nie je medzi dvoma rovnakými blokmi.
+        if (isOpaque(nb) || ((liquid || type.cutout) && nb == id)) return k;
 
-                for (const FaceDef& face : FACES) {
-                    glm::ivec3 n = glm::ivec3(x, y, z) + face.normal;
-                    BlockId nb = in.at(n.x, n.y, n.z);
-                    // Pevný blok: stena je vidno cez vzduch, vodu aj listy.
-                    // Voda a listy: stena nie je medzi dvoma rovnakými blokmi.
-                    if (isOpaque(nb) || ((liquid || type.cutout) && nb == id))
-                        continue;
+        k.valid = 1;
+        k.tile = (uint8_t)(face.kind == FaceKind::Top ? type.tileTop : face.kind == FaceKind::Bottom ? type.tileBottom : type.tileSide);
+        k.liquid = liquid;
+        // Hladina je o kúsok nižšie ako plný blok (len keď nad ňou nie je ďalšia tekutina).
+        k.surface = liquid && in.at(x, y + 1, z) != id;
+        // Tekutiny tint nepotrebujú – shader vody z neho spozná lávu (x > 1.5).
+        glm::vec3 tint = !liquid ? in.tints[z * Chunk::SIZE_X + x] : id == BlockId::Lava ? glm::vec3(2.0f) : glm::vec3(1.0f);
+        for (int i = 0; i < 3; ++i) k.tint[i] = quantize(tint[i], TINT_STEPS);
 
-                    int tile = face.kind == FaceKind::Top    ? type.tileTop
-                             : face.kind == FaceKind::Bottom ? type.tileBottom
-                                                             : type.tileSide;
-                    // Polovica texelu dovnútra, aby na hranách nepresakovala susedná dlaždica atlasu.
-                    const float inset = 0.5f / (16.0f * atlasTiles);
-                    float u0 = (float)tile / atlasTiles + inset;
-                    float u1 = (float)(tile + 1) / atlasTiles - inset;
-                    float v0 = inset * atlasTiles, v1 = 1.0f - inset * atlasTiles;
+        // Svietiace bloky majú steny osvetlené aspoň vlastným svetlom.
+        const bool glows = type.lightR | type.lightG | type.lightB;
+        const glm::vec3 selfGlow(CURVE.v[type.lightR], CURVE.v[type.lightG], CURVE.v[type.lightB]);
 
-                    // Pre každý roh: 2 boční susedia a 1 diagonálny vo vrstve pred stenou.
-                    //  - ambient occlusion: kúty a štrbiny stmavnú
-                    //  - plynulé svetlo: priemer svetla z buniek, ktoré nie sú plné
-                    int axisN = face.normal.x ? 0 : face.normal.y ? 1 : 2;
-                    int t1 = (axisN + 1) % 3, t2 = (axisN + 2) % 3;
-                    int ao[4];
-                    glm::vec4 cornerLight[4];
-                    const glm::ivec4 own = lightAt(n);
-                    for (int c = 0; c < 4; ++c) {
-                        glm::ivec3 d1(0), d2(0);
-                        d1[t1] = face.corners[c][t1] > 0.5f ? 1 : -1;
-                        d2[t2] = face.corners[c][t2] > 0.5f ? 1 : -1;
-                        glm::ivec3 a = n + d1, b = n + d2, cc = n + d1 + d2;
-                        BlockId ba = in.at(a.x, a.y, a.z), bb = in.at(b.x, b.y, b.z), bc = in.at(cc.x, cc.y, cc.z);
-                        bool s1 = occludes(ba), s2 = occludes(bb), sc = occludes(bc);
-                        ao[c] = liquid ? 3 : (s1 && s2) ? 0 : 3 - (int)s1 - (int)s2 - (int)sc;
+        // Pre každý roh: 2 boční susedia a 1 diagonálny vo vrstve pred stenou.
+        //  - ambient occlusion: kúty a štrbiny stmavnú
+        //  - plynulé svetlo: priemer svetla z buniek, ktoré nie sú plné
+        int axisN = face.normal.x ? 0 : face.normal.y ? 1 : 2;
+        int t1 = (axisN + 1) % 3, t2 = (axisN + 2) % 3;
+        const glm::ivec4 own = lightAt(n);
+        for (int c = 0; c < 4; ++c) {
+            glm::ivec3 d1(0), d2(0);
+            d1[t1] = face.corners[c][t1] > 0.5f ? 1 : -1;
+            d2[t2] = face.corners[c][t2] > 0.5f ? 1 : -1;
+            glm::ivec3 a = n + d1, b = n + d2, cc = n + d1 + d2;
+            BlockId ba = in.at(a.x, a.y, a.z), bb = in.at(b.x, b.y, b.z), bc = in.at(cc.x, cc.y, cc.z);
+            bool s1 = occludes(ba), s2 = occludes(bb), sc = occludes(bc);
+            k.ao[c] = (uint8_t)(liquid ? 3 : (s1 && s2) ? 0 : 3 - (int)s1 - (int)s2 - (int)sc);
 
-                        glm::vec4 sum(own);
-                        int count = 1;
-                        if (!isOpaque(ba)) { sum += glm::vec4(lightAt(a)); ++count; }
-                        if (!isOpaque(bb)) { sum += glm::vec4(lightAt(b)); ++count; }
-                        if (!isOpaque(bc) && !(isOpaque(ba) && isOpaque(bb))) { sum += glm::vec4(lightAt(cc)); ++count; }
-                        glm::vec4 avg = sum / (float)count;
-                        auto curve = [](float level) {
-                            int lo = (int)level;
-                            float t = level - lo;
-                            return CURVE.v[lo] * (1.0f - t) + CURVE.v[std::min(lo + 1, 15)] * t;
-                        };
-                        cornerLight[c] = {curve(avg.x), curve(avg.y), curve(avg.z), curve(avg.w)};
-                        if (glows) {
-                            cornerLight[c].y = std::max(cornerLight[c].y, selfGlow.r);
-                            cornerLight[c].z = std::max(cornerLight[c].z, selfGlow.g);
-                            cornerLight[c].w = std::max(cornerLight[c].w, selfGlow.b);
-                        }
+            glm::vec4 sum(own);
+            int count = 1;
+            if (!isOpaque(ba)) { sum += glm::vec4(lightAt(a)); ++count; }
+            if (!isOpaque(bb)) { sum += glm::vec4(lightAt(b)); ++count; }
+            if (!isOpaque(bc) && !(isOpaque(ba) && isOpaque(bb))) { sum += glm::vec4(lightAt(cc)); ++count; }
+            glm::vec4 avg = sum / (float)count;
+            glm::vec4 l(curve(avg.x), curve(avg.y), curve(avg.z), curve(avg.w));
+            if (glows) {
+                l.y = std::max(l.y, selfGlow.r);
+                l.z = std::max(l.z, selfGlow.g);
+                l.w = std::max(l.w, selfGlow.b);
+            }
+            for (int i = 0; i < 4; ++i) k.light[c * 4 + i] = quantize(l[i], LIGHT_STEPS);
+        }
+        return k;
+    };
+
+    // Greedy meshing: pre každý smer a každú vrstvu sa spravia "masky" stien a rovnaké susedné
+    // steny sa zlúčia do čo najväčších obdĺžnikov. Textúra sa v shaderi opakuje (fract),
+    // takže obdĺžnik 5×3 vyzerá presne ako 15 samostatných stien.
+    const int sizes[3] = {Chunk::SIZE_X, in.maxY + 1, Chunk::SIZE_Z};
+    std::vector<FaceKey> mask;
+
+    for (const FaceDef& face : FACES) {
+        const int axisN = face.normal.x ? 0 : face.normal.y ? 1 : 2;
+        // Osi štvoruholníka: U = smer roh0→roh1, V = smer roh1→roh2.
+        int axisU = 0, axisV = 0;
+        for (int a = 0; a < 3; ++a) {
+            if (face.corners[1][a] != face.corners[0][a]) axisU = a;
+            if (face.corners[2][a] != face.corners[1][a]) axisV = a;
+        }
+        const int su = sizes[axisU], sv = sizes[axisV];
+        mask.assign((size_t)su * sv, FaceKey{});
+
+        for (int s = 0; s < sizes[axisN]; ++s) {
+            // Maska vrstvy
+            for (int v = 0; v < sv; ++v)
+                for (int u = 0; u < su; ++u) {
+                    glm::ivec3 p(0);
+                    p[axisN] = s;
+                    p[axisU] = u;
+                    p[axisV] = v;
+                    mask[(size_t)v * su + u] = faceKey(p.x, p.y, p.z, face);
+                }
+
+            // Zlučovanie
+            for (int v = 0; v < sv; ++v) {
+                for (int u = 0; u < su;) {
+                    const FaceKey k = mask[(size_t)v * su + u];
+                    if (!k.valid) { ++u; continue; }
+
+                    int w = 1;
+                    while (u + w < su && mask[(size_t)v * su + u + w] == k) ++w;
+                    int h = 1;
+                    for (; v + h < sv; ++h) {
+                        bool rowOk = true;
+                        for (int i = 0; i < w && rowOk; ++i) rowOk = mask[(size_t)(v + h) * su + u + i] == k;
+                        if (!rowOk) break;
                     }
+                    for (int j = 0; j < h; ++j)
+                        for (int i = 0; i < w; ++i) mask[(size_t)(v + j) * su + u + i].valid = 0;
 
-                    glm::vec3 p((float)x, (float)y, (float)z);
+                    // Štvoruholník: roh s hodnotou 0 v osi = začiatok oblasti, 1 = koniec (začiatok + rozmer).
+                    MeshData& out = k.liquid ? data.liquid : data.opaque;
+                    glm::vec3 origin(0.0f);
+                    origin[axisN] = (float)s;
+                    origin[axisU] = (float)u;
+                    origin[axisV] = (float)v;
+                    glm::vec3 extent(1.0f);
+                    extent[axisU] = (float)w;
+                    extent[axisV] = (float)h;
+                    const glm::vec3 tint(k.tint[0] / TINT_STEPS, k.tint[1] / TINT_STEPS, k.tint[2] / TINT_STEPS);
+
                     uint32_t base = (uint32_t)out.vertices.size();
                     for (int c = 0; c < 4; ++c) {
                         glm::vec3 corner = face.corners[c];
-                        if (corner.y > 0.5f) corner.y = topHeight;
-                        glm::vec2 uv(c == 0 || c == 3 ? u0 : u1, c < 2 ? v1 : v0);
-                        out.vertices.push_back({p + corner, uv, face.shade * AO_LEVELS[ao[c]], tint, cornerLight[c]});
+                        glm::vec3 pos = origin + corner * extent;
+                        if (k.surface && corner.y > 0.5f) pos.y = origin.y + 0.875f;
+                        // UV v blokoch (0..w, 0..h); v = 0 je horný okraj textúry.
+                        glm::vec2 uv(c == 0 || c == 3 ? 0.0f : extent[axisU], c < 2 ? extent[axisV] : 0.0f);
+                        glm::vec4 l(k.light[c * 4] / LIGHT_STEPS, k.light[c * 4 + 1] / LIGHT_STEPS, k.light[c * 4 + 2] / LIGHT_STEPS,
+                                    k.light[c * 4 + 3] / LIGHT_STEPS);
+                        out.vertices.push_back({pos, uv, face.shade * AO_LEVELS[k.ao[c]], tint, l, (float)k.tile});
                     }
                     // Uhlopriečku štvorca otočíme podľa jasu rohov, inak by tieň vytváral "pruhy".
-                    auto bright = [&](int c) { return AO_LEVELS[ao[c]] * std::max(cornerLight[c].x, cornerLight[c].y); };
+                    auto bright = [&](int c) { return AO_LEVELS[k.ao[c]] * std::max(k.light[c * 4], k.light[c * 4 + 1]); };
                     if (bright(0) + bright(2) >= bright(1) + bright(3))
                         out.indices.insert(out.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
                     else
                         out.indices.insert(out.indices.end(), {base + 1, base + 2, base + 3, base + 1, base + 3, base});
+
+                    u += w;
                 }
             }
         }
@@ -300,5 +378,6 @@ ChunkMeshData buildChunkMesh(const MeshInput& in, int atlasTiles)
 
     return data;
 }
+
 
 } // namespace cubiq

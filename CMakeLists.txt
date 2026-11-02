@@ -78,6 +78,7 @@ add_executable(Cubiq
     src/Game/Sky.cpp
     src/Game/SaveGame.cpp
     src/Game/Gui.cpp
+    src/Game/FarTerrain.cpp
 )
 if(WIN32)
     # Ikona aplikácie a údaje o verzii v .exe; bez konzolového okna v Release.

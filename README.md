@@ -54,6 +54,7 @@ Uložené svety v `%APPDATA%\Cubiq` ostávajú aj po odinštalovaní.
 | F3 | ladiace informácie (FPS, pozícia, biom, chunky, GPU…) |
 | F11 | celá obrazovka |
 | + / - | väčší / menší dohľad (chunky) |
+| L | vzdialený terén (zjednodušená krajina až do 4× dohľadu) |
 | Esc | pauza (uložiť, odísť do menu) |
 | T | posunúť čas o 2 hodiny (deň trvá 20 minút) |
 | Esc | zavrieť inventár / uvoľniť myš (2× = koniec) |

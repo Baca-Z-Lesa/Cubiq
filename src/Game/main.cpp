@@ -14,6 +14,7 @@
 #include "Game/BlockAtlas.h"
 #include "Game/BlockHighlight.h"
 #include "Game/DebugOverlay.h"
+#include "Game/FarTerrain.h"
 #include "Game/Gui.h"
 #include "Game/Hud.h"
 #include "Game/Inventory.h"
@@ -76,9 +77,10 @@ struct GameWorld {
     TerrainGenerator generator;
     World world;
     ChunkManager chunks;
+    FarTerrain distant; // zjednodušená krajina za dohľadom chunkov (pozor: "far" je makro z windows.h)
 
     GameWorld(uint32_t seed, WorldStorage* storage, int renderDistance)
-        : generator(seed), chunks(world, generator, storage, renderDistance, ATLAS_TILES)
+        : generator(seed), chunks(world, generator, storage, renderDistance, ATLAS_TILES), distant(generator)
     {
     }
 };
@@ -149,6 +151,10 @@ struct WorldRenderer {
     Shader waterShader{"assets/shaders/water.vert", "assets/shaders/water.frag"};
     SkyRenderer sky;
     BlockHighlight highlight;
+    bool farTerrain = true; // L = zapnúť/vypnúť vzdialený terén
+
+    // Dosah vzdialeného terénu: 4× dohľad chunkov (aspoň 384, najviac 1024 blokov).
+    static float farRadiusFor(float nearRadius) { return std::clamp(nearRadius * 4.0f, 384.0f, 1024.0f); }
 
     void draw(GameWorld& game, const Camera& camera, float aspect, const SkyState& s, float animTime,
               const RaycastHit* hit, const Texture& atlas)
@@ -157,10 +163,13 @@ struct WorldRenderer {
         ChunkManager& chunks = game.chunks;
         const bool underwater = isLiquid(game.world.getBlock(
             (int)std::floor(camera.position.x), (int)std::floor(camera.position.y), (int)std::floor(camera.position.z)));
-        const float viewDistance = (float)(chunks.renderDistance() * Chunk::SIZE_X);
+        const float nearRadius = (float)(chunks.renderDistance() * Chunk::SIZE_X);
+        const float farRadius = farRadiusFor(nearRadius);
         // Hmla má farbu oblohy pri obzore, takže terén v diaľke plynule splynie s oblohou.
+        // So vzdialeným terénom začína až ďaleko za chunkami.
+        const float viewDistance = farTerrain ? farRadius : nearRadius;
         const glm::vec3 fogColor = underwater ? WATER_FOG_COLOR * std::max(s.sunBrightness, 0.3f) : s.horizon;
-        const float fogStart = underwater ? 0.0f : viewDistance * 0.6f;
+        const float fogStart = underwater ? 0.0f : viewDistance * (farTerrain ? 0.35f : 0.6f);
         const float fogEnd = underwater ? 28.0f : viewDistance - 8.0f;
         const glm::mat4 view = camera.view(), projection = camera.projection(aspect);
 
@@ -170,10 +179,17 @@ struct WorldRenderer {
         // 0) Obloha (pod vodou len farba hmly).
         if (!underwater) sky.drawSky(s, view, projection, animTime);
 
+        // 0b) Vzdialený terén – vnútri dohľadu chunkov ho shader vystrihne.
+        if (farTerrain && !underwater) {
+            game.distant.update(camera.position, farRadius);
+            game.distant.draw(projection * view, camera.position, s, fogColor, fogStart, fogEnd, nearRadius - 16.0f);
+        }
+
         blockShader.bind();
         blockShader.setMat4("uView", view);
         blockShader.setMat4("uProjection", projection);
         blockShader.setInt("uAtlas", 0);
+        blockShader.setFloat("uAtlasTiles", (float)ATLAS_TILES);
         blockShader.setVec3("uFogColor", fogColor);
         blockShader.setFloat("uSunBrightness", s.sunBrightness);
         blockShader.setVec3("uSunColor", s.sunColor);
@@ -211,6 +227,7 @@ struct WorldRenderer {
         waterShader.setMat4("uView", view);
         waterShader.setMat4("uProjection", projection);
         waterShader.setInt("uAtlas", 0);
+        waterShader.setFloat("uAtlasTiles", (float)ATLAS_TILES);
         waterShader.setFloat("uTime", animTime);
         waterShader.setVec3("uCameraPos", camera.position);
         waterShader.setVec3("uSunDir", s.sunDir);
@@ -402,6 +419,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
 
         if (Input::wasKeyPressed(GLFW_KEY_F11)) window.toggleFullscreen();
         if (Input::wasKeyPressed(GLFW_KEY_F3)) showDebug = !showDebug;
+        if (Input::wasKeyPressed(GLFW_KEY_L)) renderer.farTerrain = !renderer.farTerrain;
         if (Input::wasKeyPressed(GLFW_KEY_F1)) {
             wireframe = !wireframe;
             glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
@@ -583,6 +601,9 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                     fmt("Svet: %s   seed %u", s.info.name.c_str(), g.generator.seed()),
                     fmt("Chunky: %zu nacitanych, %zu v rade, dohlad %d", g.world.chunkCount(), g.chunks.pendingCount(), g.chunks.renderDistance()),
                     fmt("Steny: %d   mesh %.2f ms/chunk (%d)", shownFaces, g.chunks.meshMsAverage(), g.chunks.meshedTotal()),
+                    renderer.farTerrain ? fmt("Vzdialeny teren: %zu dlazdic do %.0f blokov (L)", g.distant.tileCount(),
+                                              WorldRenderer::farRadiusFor((float)(g.chunks.renderDistance() * Chunk::SIZE_X)))
+                                        : std::string("Vzdialeny teren: vypnuty (L)"),
                 };
                 dbg.right = {
                     fmt("%s", glVersion.c_str()),
@@ -596,7 +617,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                     "",
                     "F1 drotovy model   F3 toto okno",
                     "F11 cela obrazovka   T +2 hodiny",
-                    "F let   +/- dohlad   Esc pauza",
+                    "F let   +/- dohlad   L vzdialeny teren",
                 };
                 dbg.draw(ui);
             }

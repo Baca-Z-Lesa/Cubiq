@@ -13,6 +13,7 @@ struct Vertex {
     float shade;     // tieňovanie podľa strany kocky × ambient occlusion
     glm::vec3 tint;  // farba biómu pre tónované pixely (tráva, listy)
     glm::vec4 light; // jas: x = slnko, yzw = farebné svetlo zo zdrojov (R, G, B)
+    float tile = 0;  // index dlaždice v atlase (uv je v blokoch a textúra sa opakuje)
 };
 
 // Vertexy + indexy na GPU (VAO/VBO/EBO).
