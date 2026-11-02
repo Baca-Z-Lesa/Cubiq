@@ -41,7 +41,7 @@ Uložené svety v `%APPDATA%\Cubiq` ostávajú aj po odinštalovaní.
 | Kláves | Akcia |
 |---|---|
 | Myš | rozhliadanie |
-| Ľavé tlačidlo | kopať (držaním opakovane) |
+| Ľavé tlačidlo | kopať (držaním opakovane) / udrieť zviera |
 | Pravé tlačidlo | postaviť blok z hotbaru |
 | 1–9 / koliesko | výber v hotbare |
 | E | inventár (klik = vziať / položiť / vymeniť stack) |

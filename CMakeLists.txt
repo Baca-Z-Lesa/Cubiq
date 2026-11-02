@@ -80,6 +80,9 @@ add_executable(Cubiq
     src/Game/Gui.cpp
     src/Game/FarTerrain.cpp
     src/Game/SectionCulling.cpp
+    src/Game/Pathfinder.cpp
+    src/Game/Entities.cpp
+    src/Game/EntityRenderer.cpp
 )
 if(WIN32)
     # Ikona aplikácie a údaje o verzii v .exe; bez konzolového okna v Release.

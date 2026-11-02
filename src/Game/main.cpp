@@ -14,6 +14,8 @@
 #include "Game/BlockAtlas.h"
 #include "Game/BlockHighlight.h"
 #include "Game/DebugOverlay.h"
+#include "Game/Entities.h"
+#include "Game/EntityRenderer.h"
 #include "Game/FarTerrain.h"
 #include "Game/SectionCulling.h"
 #include "Game/Gui.h"
@@ -154,13 +156,14 @@ struct WorldRenderer {
     BlockHighlight highlight;
     bool farTerrain = true; // L = zapnúť/vypnúť vzdialený terén
     VisibleSections visible;
+    EntityRenderer mobRenderer;
     int facesDrawn = 0; // pre F3
 
     // Dosah vzdialeného terénu: 6× dohľad chunkov (aspoň 512, najviac 1536 blokov).
     static float farRadiusFor(float nearRadius) { return std::clamp(nearRadius * 6.0f, 512.0f, 1536.0f); }
 
     void draw(GameWorld& game, const Camera& camera, float aspect, const SkyState& s, float animTime,
-              const RaycastHit* hit, const Texture& atlas)
+              const RaycastHit* hit, const Texture& atlas, const EntityManager* entities)
     {
         const glm::vec3 WATER_FOG_COLOR(0.08f, 0.22f, 0.45f);
         ChunkManager& chunks = game.chunks;
@@ -238,6 +241,9 @@ struct WorldRenderer {
         // 1) Terén
         drawChunks(false);
 
+        // 1b) Zvieratá
+        if (entities) mobRenderer.draw(*entities, game.world, projection * view, camera.position, s, fogColor, fogStart, fogEnd);
+
         // 2) Mraky nad kamerou alebo okolo nej – až po teréne, aby zakryli zem pod sebou.
         if (!underwater && !cloudsBehindTerrain)
             sky.drawClouds(s, view, projection, camera.position, viewDistance, animTime);
@@ -284,6 +290,7 @@ struct Session {
     ItemStack held;
     bool inventoryOpen = false;
     BlockInteraction interaction;
+    EntityManager entities; // zvieratá sa neukladajú, objavujú sa znova podľa biómu
     double worldTime = 0.08;
     float autosaveTimer = 0.0f;
 
@@ -514,6 +521,8 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
             chunks.update(s.player.position);
             updateMs += (glfwGetTime() - tUpdate0) * 1000.0;
 
+            if (running) s.entities.update(g.world, g.generator, s.player.position, dt);
+
             hit = raycast(g.world, s.camera.position, s.camera.forward(), BlockInteraction::REACH);
             if (screen == Screen::Game) {
                 if (s.inventoryOpen) {
@@ -522,7 +531,15 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                         if (slot >= 0) s.inventory.clickSlot(slot, s.held);
                     }
                 } else if (window.isCursorLocked() && !clickConsumed) {
-                    s.interaction.update(g.world, s.player, s.inventory, hit, dt);
+                    // Úder do zvieraťa má prednosť pred blokom, ak je bližšie.
+                    float mobDist = 0.0f;
+                    int mob = s.entities.raycast(s.camera.position, s.camera.forward(), BlockInteraction::REACH, mobDist);
+                    if (mob >= 0 && (!hit.hit || mobDist < hit.distance) && Input::wasMousePressed(GLFW_MOUSE_BUTTON_LEFT)) {
+                        s.entities.hit(mob, s.camera.forward());
+                        s.interaction.breakCooldown = BlockInteraction::REPEAT; // tento klik nekope
+                    } else {
+                        s.interaction.update(g.world, s.player, s.inventory, hit, dt);
+                    }
                 }
             }
 
@@ -541,9 +558,9 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
         if (inGame) {
             Session& s = *session;
             renderer.draw(*s.game, s.camera, window.aspect(), sky, animTime,
-                          (screen == Screen::Game && !s.inventoryOpen) ? &hit : nullptr, atlas);
+                          (screen == Screen::Game && !s.inventoryOpen) ? &hit : nullptr, atlas, &s.entities);
         } else {
-            renderer.draw(*background->game, background->camera, window.aspect(), sky, animTime, nullptr, atlas);
+            renderer.draw(*background->game, background->camera, window.aspect(), sky, animTime, nullptr, atlas, nullptr);
         }
 
         ui.begin(window.width(), window.height());
@@ -623,6 +640,7 @@ static int run(const uint32_t* quickSeed, const glm::ivec2* startAt)
                     fmt("Steny: %d, kreslenych %d (%.0f%%)", shownFaces, renderer.facesDrawn,
                         shownFaces ? 100.0 * renderer.facesDrawn / shownFaces : 0.0),
                     fmt("Viditelne sekcie: %d   mesh %.2f ms/chunk", renderer.visible.visibleCount(), g.chunks.meshMsAverage()),
+                    fmt("Zvierata: %zu / %d", s.entities.mobs().size(), EntityManager::MAX_MOBS),
                     renderer.farTerrain ? fmt("Vzdialeny teren: %d/%zu dlazdic do %.0f blokov (L)", g.distant.drawnTiles(), g.distant.tileCount(),
                                               WorldRenderer::farRadiusFor((float)(g.chunks.renderDistance() * Chunk::SIZE_X)))
                                         : std::string("Vzdialeny teren: vypnuty (L)"),
